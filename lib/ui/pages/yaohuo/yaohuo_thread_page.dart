@@ -17,18 +17,66 @@ class YaohuoThreadPage extends StatefulWidget {
 }
 
 class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
+  final TextEditingController _replyController = TextEditingController();
+  final FocusNode _replyFocus = FocusNode();
   YaohuoThread? _thread;
   final List<YaohuoReply> _replies = <YaohuoReply>[];
   String _moreUrl = '';
   bool _loading = true;
   bool _loadingMore = false;
   bool _notLoggedIn = false;
+  bool _sending = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _replyController.dispose();
+    _replyFocus.dispose();
+    super.dispose();
+  }
+
+  /// 收藏 / 顶 / 赞：都是 GET 一个带参数的地址。
+  Future<void> _hit(String url, String label) async {
+    if (url.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text('$label入口没找到，可能在浏览器里才能用')));
+      return;
+    }
+    final ok = await YaohuoRepository.instance.hit(url);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(ok ? '$label成功' : '$label失败')));
+    if (ok) await _load();
+  }
+
+  Future<void> _sendReply() async {
+    final thread = _thread;
+    final content = _replyController.text.trim();
+    if (thread == null || content.isEmpty || _sending) return;
+    setState(() => _sending = true);
+    final message = await YaohuoRepository.instance.reply(
+      thread: thread,
+      content: content,
+      referer: widget.url,
+    );
+    if (!mounted) return;
+    setState(() => _sending = false);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+    if (message.contains('成功')) {
+      _replyController.clear();
+      _replyFocus.unfocus();
+      await _load();
+    }
   }
 
   Future<void> _load() async {
@@ -105,6 +153,23 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         ),
         actions: [
+          if (thread != null) ...[
+            IconButton(
+              tooltip: '收藏',
+              onPressed: () => _hit(thread.favoriteUrl, '收藏'),
+              icon: const Icon(Icons.star_outline_rounded),
+            ),
+            IconButton(
+              tooltip: '顶',
+              onPressed: () => _hit(thread.upUrl, '顶'),
+              icon: const Icon(Icons.thumb_up_outlined),
+            ),
+            IconButton(
+              tooltip: '赞',
+              onPressed: () => _hit(thread.likeUrl, '赞'),
+              icon: const Icon(Icons.favorite_outline_rounded),
+            ),
+          ],
           IconButton(tooltip: '刷新', onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
           IconButton(
             tooltip: '用浏览器打开',
@@ -114,6 +179,53 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
         ],
       ),
       body: _buildBody(scheme),
+      bottomNavigationBar: _thread == null ? null : _buildReplyBar(scheme),
+    );
+  }
+
+  Widget _buildReplyBar(ColorScheme scheme) {
+    return Material(
+      color: scheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5))),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _replyController,
+                  focusNode: _replyFocus,
+                  minLines: 1,
+                  maxLines: 3,
+                  textInputAction: TextInputAction.newline,
+                  style: const TextStyle(fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: '回复这个帖子…',
+                    hintStyle: const TextStyle(fontSize: 13),
+                    filled: true,
+                    fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                tooltip: '发送',
+                onPressed: _sending ? null : _sendReply,
+                icon: _sending
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.send_rounded),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

@@ -46,7 +46,7 @@ class YaohuoReply {
   final String time;
 }
 
-/// 帖子详情（正文 + 回复）。
+/// 帖子详情（正文 + 回复 + 可执行动作）。
 class YaohuoThread {
   const YaohuoThread({
     required this.title,
@@ -59,6 +59,12 @@ class YaohuoThread {
     required this.links,
     required this.replies,
     required this.moreUrl,
+    this.threadId = '',
+    this.classId = '',
+    this.sid = '',
+    this.favoriteUrl = '',
+    this.upUrl = '',
+    this.likeUrl = '',
   });
 
   final String title;
@@ -73,6 +79,16 @@ class YaohuoThread {
 
   /// 「更多回帖」的地址，空串表示没有更多。
   final String moreUrl;
+
+  /// 回帖表单需要的隐藏字段（站点用 sid 当一次性令牌）。
+  final String threadId;
+  final String classId;
+  final String sid;
+
+  /// 收藏 / 顶 / 赞 的地址。
+  final String favoriteUrl;
+  final String upUrl;
+  final String likeUrl;
 }
 
 /// 妖火网的原生数据层。
@@ -84,7 +100,8 @@ class YaohuoThread {
 ///   `div.bbscontent`（用 `<!--listS-->…<!--listE-->` 包起来）；
 /// - 楼主信息：`div.subtitle` 里带 `[楼主]` 的那一块；
 /// - 回复：`div.recontent > div.reline`，`[楼层]` 开头，第二个 `<a>` 是用户名；
-/// - 更多回复：`div.more > a`。
+/// - 更多回复：`div.more > a`；
+/// - 回帖：`form[name=f]` 的隐藏字段（id / classid / sid）+ POST `bbs/book_re.aspx`。
 class YaohuoRepository {
   YaohuoRepository._();
 
@@ -92,30 +109,49 @@ class YaohuoRepository {
 
   static const String _base = 'https://yaohuo.me/';
 
-  Future<String> _fetch(String url, {Map<String, String>? query}) async {
-    await YaohuoSession.instance.refresh();
-    var uri = Uri.parse(url.startsWith('http') ? url : _base + url.replaceFirst(RegExp('^/+'), ''));
-    if (query != null && query.isNotEmpty) {
-      uri = uri.replace(queryParameters: {...uri.queryParameters, ...query});
-    }
-    final response = await http.get(
-      uri,
-      headers: {
+  static const String actionNew = 'new';
+  static const String actionGood = 'good';
+  static const String actionClass = 'class';
+  static const String actionSearch = 'search';
+
+  /// 妖火的板块（classid → 名字），取自站点自身的板块入口。
+  static const List<({int id, String name})> boards = <({int id, String name})>[
+    (id: 201, name: '资源共享'),
+    (id: 197, name: '综合技术'),
+    (id: 203, name: '免流讨论'),
+    (id: 204, name: '有奖活动'),
+    (id: 177, name: '妖火茶馆'),
+    (id: 213, name: '悬赏问答'),
+    (id: 240, name: '贴图晒照'),
+    (id: 199, name: '站务处理'),
+    (id: 198, name: '投诉建议'),
+  ];
+
+  Map<String, String> get _headers => <String, String>{
         'User-Agent': AppConfig.userAgent,
         'Referer': _base,
         'Accept': 'text/html,application/xhtml+xml',
         if (YaohuoSession.instance.cookieHeader.isNotEmpty) 'Cookie': YaohuoSession.instance.cookieHeader,
-      },
-    ).timeout(const Duration(seconds: 25));
+      };
+
+  Future<String> _fetch(String url, {Map<String, String>? query}) async {
+    await YaohuoSession.instance.refresh();
+    var uri = Uri.parse(url.startsWith('http') ? url : _base + url.replaceFirst(RegExp(r'^/+'), ''));
+    if (query != null && query.isNotEmpty) {
+      uri = uri.replace(queryParameters: <String, String>{...uri.queryParameters, ...query});
+    }
+    final response = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 25));
     final body = _decode(response);
     if (response.statusCode >= 400) {
       throw StateError('HTTP ${response.statusCode}');
     }
-    if (body.contains('请先登录') || body.contains('请先登录网站')) {
+    if (_looksLoggedOut(body)) {
       throw const YaohuoNotLoggedIn();
     }
     return body;
   }
+
+  bool _looksLoggedOut(String body) => body.contains('请先登录');
 
   String _decode(http.Response response) {
     try {
@@ -125,21 +161,24 @@ class YaohuoRepository {
     }
   }
 
-  /// 最新帖子列表（妖火首页的「新帖」）。
-  Future<List<YaohuoThreadItem>> fetchNewThreads({int page = 1}) async {
-    final html = await _fetch(
-      'bbs/book_list.aspx',
-      query: {'action': 'new', 'getTotal': '2021', 'page': '$page', 'siteId': '1000', 'classId': '0'},
-    );
-    return parseThreadList(html);
-  }
-
-  /// 板块列表。
-  Future<List<YaohuoThreadItem>> fetchBoardThreads({required int classId, int page = 1}) async {
-    final html = await _fetch(
-      'bbs/book_list.aspx',
-      query: {'action': 'class', 'classId': '$classId', 'page': '$page', 'siteId': '1000', 'getTotal': '2021'},
-    );
+  Future<List<YaohuoThreadItem>> fetchThreads({
+    required String action,
+    int classId = 0,
+    int page = 1,
+    String? key,
+  }) async {
+    final query = <String, String>{
+      'action': action,
+      'getTotal': '2021',
+      'page': '$page',
+      'siteId': '1000',
+      if (action == actionSearch) ...<String, String>{
+        'key': key ?? '',
+        'type': 'title',
+      } else
+        'classId': '$classId',
+    };
+    final html = await _fetch('bbs/book_list.aspx', query: query);
     return parseThreadList(html);
   }
 
@@ -153,10 +192,56 @@ class YaohuoRepository {
     final html = await _fetch(url);
     final doc = html_parser.parse(html);
     final more = doc.querySelector('div.more a')?.attributes['href'] ?? '';
-    return (
-      replies: _parseReplies(doc),
-      moreUrl: more.isEmpty ? '' : _absolute(more),
-    );
+    return (replies: _parseReplies(doc), moreUrl: more.isEmpty ? '' : _absolute(more));
+  }
+
+  /// 回帖。返回站点给出的提示文本（成功/失败都回一个，UI 直接展示）。
+  Future<String> reply({
+    required YaohuoThread thread,
+    required String content,
+    required String referer,
+  }) async {
+    await YaohuoSession.instance.refresh();
+    try {
+      final response = await http
+          .post(
+            Uri.parse('https://yaohuo.me/bbs/book_re.aspx?siteid=1000&action=add&lpage=1'),
+            headers: <String, String>{
+              ..._headers,
+              'Referer': referer,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: <String, String>{
+              'content': content,
+              'sendmsg': '1',
+              'sendmsg2': '1',
+              'sid': thread.sid,
+              'id': thread.threadId,
+              'classid': thread.classId,
+            },
+          )
+          .timeout(const Duration(seconds: 25));
+      final body = _decode(response);
+      if (_looksLoggedOut(body)) return '登录已失效，请重新登录';
+      if (body.contains('成功') || body.contains('已回复')) return '回复成功';
+      final error = RegExp(r'<div class="error">([^<]+)</div>').firstMatch(body)?.group(1);
+      if (error != null && error.trim().isNotEmpty) return error.trim();
+      return '已提交，回帖结果以帖子页为准';
+    } catch (e) {
+      return '发送失败：$e';
+    }
+  }
+
+  /// 收藏 / 顶 / 赞：都是 GET 一个带参数的地址，成功与否看状态码。
+  Future<bool> hit(String url) async {
+    if (url.isEmpty) return false;
+    await YaohuoSession.instance.refresh();
+    try {
+      final response = await http.get(Uri.parse(url), headers: _headers).timeout(const Duration(seconds: 20));
+      return response.statusCode < 400;
+    } catch (_) {
+      return false;
+    }
   }
 
   // ---------------------------------------------------------------- 解析
@@ -230,6 +315,18 @@ class YaohuoRepository {
 
     final more = doc.querySelector('div.more a')?.attributes['href'] ?? '';
 
+    final form = doc.querySelector('form[name="f"]');
+    String field(String name) =>
+        form?.querySelector('input[name="$name"]')?.attributes['value']?.trim() ?? '';
+
+    String actionUrl(String pattern) {
+      for (final anchor in doc.querySelectorAll('a[href]')) {
+        final href = anchor.attributes['href'] ?? '';
+        if (href.contains(pattern)) return _absolute(href);
+      }
+      return '';
+    }
+
     return YaohuoThread(
       title: title,
       board: board,
@@ -241,6 +338,12 @@ class YaohuoRepository {
       links: links,
       replies: _parseReplies(doc),
       moreUrl: more.isEmpty ? '' : _absolute(more),
+      threadId: field('id'),
+      classId: field('classid'),
+      sid: field('sid'),
+      favoriteUrl: actionUrl('action=fav'),
+      upUrl: actionUrl('state=1'),
+      likeUrl: actionUrl('state=2'),
     );
   }
 
@@ -261,12 +364,7 @@ class YaohuoRepository {
         when = timeMatch.group(1) ?? '';
         content = content.substring(0, timeMatch.start);
       }
-      replies.add(YaohuoReply(
-        floor: floor,
-        author: author,
-        content: _compact(content),
-        time: when,
-      ));
+      replies.add(YaohuoReply(floor: floor, author: author, content: _compact(content), time: when));
     }
     return replies;
   }
