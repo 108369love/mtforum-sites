@@ -8,6 +8,7 @@ import '../about_page.dart';
 import '../internal_browser_page.dart';
 import '../site_picker_page.dart';
 import '../userscripts_page.dart';
+import 'yaohuo_entries_page.dart';
 import 'yaohuo_login_page.dart';
 
 /// 妖火的「我的」：账号状态 + 几个入口。
@@ -168,7 +169,7 @@ class _YaohuoProfilePageState extends State<YaohuoProfilePage> {
                   title: Text(entry.label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                   subtitle: Text(entry.url, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10)),
                   trailing: Icon(Icons.chevron_right_rounded, size: 20, color: scheme.outline),
-                  onTap: () => _open(InternalBrowserPage(url: entry.url, title: entry.label)),
+                  onTap: () => _open(_entryPage(entry)),
                 ),
             ]),
             const SizedBox(height: 14),
@@ -211,6 +212,12 @@ class _YaohuoProfilePageState extends State<YaohuoProfilePage> {
         ],
       ),
     );
+  }
+
+  Widget _entryPage(({String label, String url}) entry) {
+    if (entry.label == '帖子') return YaohuoMyThreadsPage(url: entry.url, title: entry.label);
+    if (entry.label == '信箱') return YaohuoLinkListPage(url: entry.url, title: entry.label);
+    return YaohuoUserPage(url: entry.url, title: entry.label);
   }
 
   IconData _navIcon(String label) {

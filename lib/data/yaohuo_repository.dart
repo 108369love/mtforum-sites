@@ -217,6 +217,81 @@ class YaohuoRepository {
     ];
   }
 
+  /// 直接抓一个地址、按帖子列表解析（「我的帖子」这类站点自己给的入口用）。
+  Future<List<YaohuoThreadItem>> fetchThreadListFromUrl(String url, {int page = 1}) async {
+    final html = await _fetch(_withPage(url, page));
+    return parseThreadList(html);
+  }
+
+  /// 抓一个地址、按「链接列表」解析（站内信、关注这类没有统一结构的列表页）。
+  Future<List<({String title, String url, String extra})>> fetchLinkList(String url) async {
+    final html = await _fetch(url);
+    return parseLinkList(html);
+  }
+
+  /// 抓用户资料页，解析成「字段 → 值」。
+  Future<Map<String, String>> fetchUserInfo(String url) async {
+    final html = await _fetch(url);
+    return parseUserInfo(html);
+  }
+
+  static String _withPage(String url, int page) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return url;
+    return uri.replace(queryParameters: <String, String>{...uri.queryParameters, 'page': '$page'}).toString();
+  }
+
+  /// 通用链接列表：优先按 `div.line1, div.line2` 拆，退而求其次扫所有站内链接。
+  static List<({String title, String url, String extra})> parseLinkList(String html) {
+    final doc = html_parser.parse(html);
+    final rows = <({String title, String url, String extra})>[];
+    for (final element in doc.querySelectorAll('div.line1, div.line2')) {
+      final anchor = element.querySelector('a[href]');
+      if (anchor == null) continue;
+      final href = anchor.attributes['href'] ?? '';
+      final title = anchor.text.trim();
+      if (href.isEmpty || title.isEmpty) continue;
+      final time = element.querySelector('span.right')?.text.trim() ?? '';
+      anchor.remove();
+      rows.add((title: title, url: _absolute(href), extra: time.isEmpty ? element.text.trim() : time));
+    }
+    if (rows.isNotEmpty) return rows;
+    // 兜底：页面里的站内链接（排除导航类固定入口）。
+    final seen = <String>{};
+    for (final anchor in doc.querySelectorAll('a[href]')) {
+      final href = anchor.attributes['href'] ?? '';
+      final title = anchor.text.trim();
+      if (href.isEmpty || title.isEmpty) continue;
+      if (!href.contains('.aspx')) continue;
+      if (href.contains('messagelist.aspx') || href.contains('wapindex.aspx')) continue;
+      if (!seen.add(href)) continue;
+      rows.add((title: title, url: _absolute(href), extra: ''));
+      if (rows.length >= 60) break;
+    }
+    return rows;
+  }
+
+  /// 用户资料页：`【字段】：值` 一行一条。
+  static Map<String, String> parseUserInfo(String html) {
+    final doc = html_parser.parse(html);
+    final content = doc.querySelector('div.content');
+    final raw = (content?.innerHtml ?? html)
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'<[^>]+>'), '');
+    final text = html_parser.parseFragment(raw).text ?? raw;
+    final info = <String, String>{};
+    for (final line in const LineSplitter().convert(text)) {
+      final match = RegExp(r'【([^】]{1,12})】\s*[:：]\s*(.*)').firstMatch(line.trim());
+      if (match == null) continue;
+      final key = match.group(1)?.trim() ?? '';
+      var value = (match.group(2) ?? '').trim();
+      value = value.replaceAll(RegExp(r'\s{2,}'), ' ');
+      if (key.isEmpty || value.isEmpty) continue;
+      info[key] = value;
+    }
+    return info;
+  }
+
   Future<YaohuoThread> fetchThread(String url) async {
     final html = await _fetch(url);
     return parseThread(html, url);
