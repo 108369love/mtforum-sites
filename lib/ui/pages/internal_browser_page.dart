@@ -127,12 +127,45 @@ class _InternalBrowserPageState extends State<InternalBrowserPage> {
 
   Future<void> _back() async {
     final controller = _controller;
-    if (controller != null && await controller.canGoBack()) {
-      await controller.goBack();
-      await _refreshBackState();
-    } else if (mounted) {
-      Navigator.pop(context);
+    if (controller == null) {
+      if (mounted) Navigator.pop(context);
+      return;
     }
+    if (!await controller.canGoBack()) {
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+    // 有些跳转链（百度网盘短链、带口令的分享页）会在历史里留下同一页的多次
+    // 跳转：goBack 之后又被服务端 302 拉回来，界面上就是「点了返回没反应」，
+    // 系统返回手势也会被一直吞掉，人被困在浏览器里出不去。
+    // 减一层历史后如果还停在同一地址，就直接关掉这一页，把人放回帖子。
+    final before = await _currentUrl(controller);
+    await controller.goBack();
+    var after = before;
+    for (var i = 0; i < 4; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!mounted) return;
+      after = await _currentUrl(controller);
+      if (after != before) break;
+    }
+    if (!mounted) return;
+    if (after.isEmpty || after == before) {
+      Navigator.pop(context);
+      return;
+    }
+    await _refreshBackState();
+  }
+
+  /// 当前地址；取不到就用 [onLoadStart]/[onLoadStop] 记下的 [_url] 兜底。
+  Future<String> _currentUrl(InAppWebViewController controller) async {
+    try {
+      final url = await controller.getUrl();
+      final text = url?.toString() ?? '';
+      if (text.isNotEmpty) return text;
+    } catch (_) {
+      // 拿不到就走下面的兜底值，不在这里把页面关掉。
+    }
+    return _url;
   }
 
   /// 把 WebView 的后退能力同步到 [_canGoBack]。
@@ -179,10 +212,16 @@ class _InternalBrowserPageState extends State<InternalBrowserPage> {
             items: const [
               GlassMenuItem(value: 'refresh', label: '刷新', icon: Icons.refresh_rounded),
               GlassMenuItem(value: 'copy', label: '复制链接', icon: Icons.link_rounded),
+              // 兜底出口：跳转链把返回吞掉时，至少还有这里能直接回帖子。
+              GlassMenuItem(value: 'close', label: '关闭浏览器', icon: Icons.close_rounded),
             ],
             onSelected: (value) async {
               final messenger = ScaffoldMessenger.of(context);
               if (value == 'refresh') await _controller?.reload();
+              if (value == 'close' && mounted) {
+                Navigator.pop(context);
+                return;
+              }
               if (value == 'copy') {
                 await Clipboard.setData(ClipboardData(text: _url));
                 messenger.showSnackBar(const SnackBar(content: Text('链接已复制')));
