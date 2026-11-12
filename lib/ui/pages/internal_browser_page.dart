@@ -968,7 +968,7 @@ $dark''';
         if (!_incognito) await _recordVisit(current, _pageTitle);
       },
       onPermissionRequest: (controller, request) async {
-        final labels = request.resources.map((r) => _permissionLabel(r.name)).join('、');
+        final labels = request.resources.map((r) => _permissionLabel(r.name())).join('、');
         final allowed = await _confirmPermission(labels.isEmpty ? '未知权限' : labels);
         return PermissionResponse(
           resources: request.resources,
