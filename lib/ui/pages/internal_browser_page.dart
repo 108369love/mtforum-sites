@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,6 +15,16 @@ import '../navigation/app_routes.dart';
 import '../widgets/glass_dialog.dart';
 import '../widgets/glass_menu.dart';
 import 'download_manager_page.dart';
+
+/// 地址栏右上角切换的搜索引擎。
+class _SearchEngine {
+  const _SearchEngine(this.name, this.template);
+
+  final String name;
+
+  /// `%s` 会被替换成经过 encode 的查询词。
+  final String template;
+}
 
 /// 内置浏览器里的一条历史 / 收藏记录。
 class WebEntry {
@@ -63,6 +74,42 @@ class _InternalBrowserPageState extends State<InternalBrowserPage> {
   static const String _bookmarkKey = 'mt_forum_web_bookmarks';
   static const int _historyLimit = 100;
 
+  static const String _engineKey = 'mt_forum_web_engine';
+  static const String _incognitoKey = 'mt_forum_web_incognito';
+  static const String _adBlockKey = 'mt_forum_web_adblock';
+
+  static const List<_SearchEngine> _engines = <_SearchEngine>[
+    _SearchEngine('百度', 'https://www.baidu.com/s?wd=%s'),
+    _SearchEngine('必应', 'https://cn.bing.com/search?q=%s'),
+    _SearchEngine('谷歌', 'https://www.google.com/search?q=%s'),
+    _SearchEngine('搜狗', 'https://www.sogou.com/web?query=%s'),
+    _SearchEngine('360搜索', 'https://www.so.com/s?q=%s'),
+    _SearchEngine('神马', 'https://m.sm.cn/s?q=%s'),
+    _SearchEngine('头条搜索', 'https://so.toutiao.com/search?keyword=%s'),
+    _SearchEngine('夸克', 'https://quark.sm.cn/s?q=%s'),
+    _SearchEngine('DuckDuckGo', 'https://duckduckgo.com/?q=%s'),
+  ];
+
+  /// 广告 / 统计域名。只收灰度最低的一批：拦错了顶多少个统计像素，
+  /// 不会把站点功能打死（EasyList 那种整库规则留给以后做）。
+  static const List<String> _adHosts = <String>[
+    'doubleclick.net',
+    'googlesyndication.com',
+    'googleadservices.com',
+    'adservice.google.com',
+    'umeng.com',
+    'cnzz.com',
+    'hm.baidu.com',
+    'pos.baidu.com',
+    'cpro.baidu.com',
+    'tanx.com',
+    'alimama.com',
+    'mmstat.com',
+    'gdt.qq.com',
+    'adnxs.com',
+    'scorecardresearch.com',
+  ];
+
   static const String _desktopUA =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -82,6 +129,10 @@ class _InternalBrowserPageState extends State<InternalBrowserPage> {
   bool _dark = false;
   bool _home = false;
   bool _findOpen = false;
+  int _engineIndex = 0;
+  bool _incognito = false;
+  bool _adBlock = true;
+  int _blocked = 0;
 
   List<WebEntry> _history = <WebEntry>[];
   List<WebEntry> _bookmarks = <WebEntry>[];
@@ -122,10 +173,16 @@ class _InternalBrowserPageState extends State<InternalBrowserPage> {
       final prefs = await SharedPreferences.getInstance();
       final history = _decode(prefs.getString(_historyKey));
       final bookmarks = _decode(prefs.getString(_bookmarkKey));
+      final engine = prefs.getInt(_engineKey) ?? 0;
+      final incognito = prefs.getBool(_incognitoKey) ?? false;
+      final adBlock = prefs.getBool(_adBlockKey) ?? true;
       if (!mounted) return;
       setState(() {
         _history = history;
         _bookmarks = bookmarks;
+        _engineIndex = engine < 0 || engine >= _engines.length ? 0 : engine;
+        _incognito = incognito;
+        _adBlock = adBlock;
       });
     } catch (_) {
       // 本地记录读不出来只是没有历史和收藏，不影响浏览。
@@ -150,6 +207,72 @@ class _InternalBrowserPageState extends State<InternalBrowserPage> {
     } catch (_) {
       // 存不下就只在本次会话里记着。
     }
+  }
+
+  Future<void> _saveSetting(String key, Object value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (value is int) await prefs.setInt(key, value);
+      if (value is bool) await prefs.setBool(key, value);
+    } catch (_) {
+      // 存不下就只在本次会话里生效。
+    }
+  }
+
+  String _searchUrl(String text) {
+    final engine = _engines[_engineIndex];
+    return engine.template.replaceFirst('%s', Uri.encodeQueryComponent(text));
+  }
+
+  bool _isAdUrl(String url) {
+    final host = Uri.tryParse(url)?.host ?? '';
+    if (host.isEmpty) return false;
+    for (final ad in _adHosts) {
+      if (host == ad || host.endsWith('.$ad')) return true;
+    }
+    return false;
+  }
+
+  String _permissionLabel(String name) {
+    if (name == 'CAMERA') return '摄像头';
+    if (name == 'MICROPHONE' || name == 'AUDIO_CAPTURE') return '麦克风';
+    if (name == 'CAMERA_AND_MICROPHONE') return '摄像头与麦克风';
+    if (name == 'GEOLOCATION') return '定位';
+    if (name == 'PROTECTED_MEDIA_ID') return '受保护媒体';
+    return name.toLowerCase();
+  }
+
+  Future<bool> _confirmPermission(String resources) async {
+    if (!mounted) return false;
+    final allowed = await showGlassDialog<bool>(
+      context: context,
+      builder: (context) => GlassDialog(
+        title: const Text('网站请求权限'),
+        content: Text('$resources\n\n只有你点「允许」时，这次请求才会放行。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('拒绝')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('允许')),
+        ],
+      ),
+    );
+    return allowed == true;
+  }
+
+  /// 唤起外部应用前先问一句，避免点个链接就被拉去装东西。
+  Future<bool> _confirmExternalApp(String url) async {
+    if (!mounted) return false;
+    final ok = await showGlassDialog<bool>(
+      context: context,
+      builder: (context) => GlassDialog(
+        title: const Text('跳转到外部应用'),
+        content: Text('这个链接要唤起手机上的其它应用：\n$url'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('打开')),
+        ],
+      ),
+    );
+    return ok == true;
   }
 
   Future<void> _recordVisit(String url, String title) async {
@@ -204,7 +327,7 @@ class _InternalBrowserPageState extends State<InternalBrowserPage> {
     }
     final looksLikeHost = !text.contains(' ') && (text.contains('.') || text.startsWith('localhost'));
     if (looksLikeHost) return 'https://$text';
-    return 'https://www.baidu.com/s?wd=${Uri.encodeQueryComponent(text)}';
+    return _searchUrl(text);
   }
 
   Future<void> _go(String input) async {
@@ -337,6 +460,56 @@ $dark''';
     } catch (_) {
       // 忽略：没套上增强也只是页面朴素一点。
     }
+  }
+
+  Future<void> _pickEngine() async {
+    final chosen = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 6),
+              child: Text('搜索引擎', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            ),
+            for (var i = 0; i < _engines.length; i++)
+              ListTile(
+                title: Text(_engines[i].name),
+                trailing: i == _engineIndex ? const Icon(Icons.check_rounded) : null,
+                onTap: () => Navigator.pop(sheetContext, i),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (chosen == null) return;
+    setState(() => _engineIndex = chosen);
+    await _saveSetting(_engineKey, chosen);
+  }
+
+  Future<void> _toggleIncognito() async {
+    final next = !_incognito;
+    setState(() => _incognito = next);
+    await _saveSetting(_incognitoKey, next);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(next ? '无痕模式：这次浏览不写历史' : '已退出无痕模式')));
+  }
+
+  Future<void> _toggleAdBlock() async {
+    final next = !_adBlock;
+    setState(() {
+      _adBlock = next;
+      if (next) _blocked = 0;
+    });
+    await _saveSetting(_adBlockKey, next);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(next ? '广告拦截已开启' : '广告拦截已关闭')));
   }
 
   Future<void> _toggleDesktop() async {
@@ -532,6 +705,21 @@ $dark''';
       const GlassMenuItem(value: 'history', label: '历史记录', icon: Icons.history_rounded),
       const GlassMenuItem(value: 'find', label: '页内查找', icon: Icons.search_rounded),
       GlassMenuItem(
+        value: 'engine',
+        label: '搜索引擎 · ${_engines[_engineIndex].name}',
+        icon: Icons.manage_search_rounded,
+      ),
+      GlassMenuItem(
+        value: 'incognito',
+        label: _incognito ? '退出无痕模式' : '无痕模式（不记历史）',
+        icon: Icons.visibility_off_outlined,
+      ),
+      GlassMenuItem(
+        value: 'adblock',
+        label: _adBlock ? '广告拦截已开 · 拦了 $_blocked 条' : '开启广告拦截',
+        icon: Icons.block_rounded,
+      ),
+      GlassMenuItem(
         value: 'desktop',
         label: _desktop ? '手机版网站' : '桌面版网站',
         icon: Icons.desktop_windows_outlined,
@@ -570,6 +758,18 @@ $dark''';
     }
     if (value == 'find') {
       await _toggleFind();
+      return;
+    }
+    if (value == 'engine') {
+      await _pickEngine();
+      return;
+    }
+    if (value == 'incognito') {
+      await _toggleIncognito();
+      return;
+    }
+    if (value == 'adblock') {
+      await _toggleAdBlock();
       return;
     }
     if (value == 'desktop') {
@@ -621,6 +821,11 @@ $dark''';
           titleSpacing: 0,
           title: _addressBar(context, scheme),
           actions: [
+            if (_incognito)
+              const Padding(
+                padding: EdgeInsets.only(right: 2),
+                child: Tooltip(message: '无痕模式', child: Icon(Icons.visibility_off_rounded, size: 18)),
+              ),
             IconButton(
               tooltip: _loading ? '停止' : '刷新',
               onPressed: () {
@@ -760,7 +965,30 @@ $dark''';
         if (!_addressFocus.hasFocus) _address.text = current;
         await _injectEnhancements(controller);
         await _refreshNavState();
-        await _recordVisit(current, _pageTitle);
+        if (!_incognito) await _recordVisit(current, _pageTitle);
+      },
+      onPermissionRequest: (controller, request) async {
+        final labels = request.resources.map((r) => _permissionLabel(r.name)).join('、');
+        final allowed = await _confirmPermission(labels.isEmpty ? '未知权限' : labels);
+        return PermissionResponse(
+          resources: request.resources,
+          action: allowed ? PermissionResponseAction.GRANT : PermissionResponseAction.DENY,
+        );
+      },
+      shouldInterceptRequest: (controller, request) async {
+        if (!_adBlock) return null;
+        final url = request.url.toString();
+        if (!_isAdUrl(url)) return null;
+        // 只把命中名单的请求换成空响应，不碰页面其它资源。
+        _blocked += 1;
+        return WebResourceResponse(
+          contentType: 'text/plain',
+          contentEncoding: 'utf-8',
+          data: Uint8List(0),
+          statusCode: 200,
+          reasonPhrase: 'OK',
+          headers: const <String, String>{'Access-Control-Allow-Origin': '*'},
+        );
       },
       onDownloadStarting: (controller, request) async {
         unawaited(_startDownload(
@@ -778,8 +1006,12 @@ $dark''';
         if (uri.scheme == 'http' || uri.scheme == 'https' || uri.scheme == 'about' || uri.scheme == 'data') {
           return NavigationActionPolicy.ALLOW;
         }
-        // mailto / market / intent 这类交给系统，WebView 自己开不了。
-        if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+        // mailto / market / intent 这类交给系统，WebView 自己开不了；
+        // 先问一句，别让一个链接把用户直接拽去装东西。
+        if (await canLaunchUrl(uri)) {
+          final ok = await _confirmExternalApp(raw);
+          if (ok) await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
         return NavigationActionPolicy.CANCEL;
       },
     );
