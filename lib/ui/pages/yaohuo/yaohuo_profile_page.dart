@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:in_app_webview_flutter/flutter_inappwebview.dart';
 
 import '../../../core/yaohuo_session.dart';
+import '../../../data/yaohuo_repository.dart';
 import '../../navigation/app_routes.dart';
 import '../about_page.dart';
 import '../internal_browser_page.dart';
@@ -20,6 +21,7 @@ class YaohuoProfilePage extends StatefulWidget {
 class _YaohuoProfilePageState extends State<YaohuoProfilePage> {
   bool _checking = true;
   bool _loggedIn = false;
+  List<({String label, String url})> _nav = <({String label, String url})>[];
 
   @override
   void initState() {
@@ -29,9 +31,19 @@ class _YaohuoProfilePageState extends State<YaohuoProfilePage> {
 
   Future<void> _check() async {
     await YaohuoSession.instance.refresh();
+    final loggedIn = YaohuoSession.instance.hasSession;
+    var nav = <({String label, String url})>[];
+    if (loggedIn) {
+      try {
+        nav = await YaohuoRepository.instance.fetchMyNav();
+      } catch (_) {
+        nav = <({String label, String url})>[];
+      }
+    }
     if (!mounted) return;
     setState(() {
-      _loggedIn = YaohuoSession.instance.hasSession;
+      _loggedIn = loggedIn;
+      _nav = nav;
       _checking = false;
     });
   }
@@ -148,6 +160,19 @@ class _YaohuoProfilePageState extends State<YaohuoProfilePage> {
             ),
           ),
           const SizedBox(height: 16),
+          if (_loggedIn && _nav.isNotEmpty) ...[
+            _group(scheme, [
+              for (final entry in _nav)
+                ListTile(
+                  leading: Icon(_navIcon(entry.label), size: 21, color: scheme.onSurfaceVariant),
+                  title: Text(entry.label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  subtitle: Text(entry.url, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10)),
+                  trailing: Icon(Icons.chevron_right_rounded, size: 20, color: scheme.outline),
+                  onTap: () => _open(InternalBrowserPage(url: entry.url, title: entry.label)),
+                ),
+            ]),
+            const SizedBox(height: 14),
+          ],
           _group(scheme, [
             ListTile(
               leading: Icon(Icons.open_in_browser_rounded, size: 21, color: scheme.onSurfaceVariant),
@@ -186,6 +211,14 @@ class _YaohuoProfilePageState extends State<YaohuoProfilePage> {
         ],
       ),
     );
+  }
+
+  IconData _navIcon(String label) {
+    if (label == '我的地盘') return Icons.space_dashboard_outlined;
+    if (label == '空间') return Icons.person_outline_rounded;
+    if (label == '帖子') return Icons.article_outlined;
+    if (label == '信箱') return Icons.mail_outline_rounded;
+    return Icons.link_rounded;
   }
 
   Widget _group(ColorScheme scheme, List<Widget> children) {

@@ -182,6 +182,41 @@ class YaohuoRepository {
     return parseThreadList(html);
   }
 
+  /// 「我的地盘 / 空间 / 帖子 / 信箱」这几个入口的真实地址。
+  ///
+  /// 地址里带用户自己的 id，只能从登录后的首页导航里现取；取不到就退回站点
+  /// 的固定路径（帖子/信箱），至少不会给个死链。
+  Future<List<({String label, String url})>> fetchMyNav() async {
+    const labels = <String>['我的地盘', '空间', '帖子', '信箱'];
+    const fallback = <String, String>{
+      '我的地盘': 'wapindex.aspx?siteid=1000',
+      '空间': 'bbs/userinfo.aspx',
+      '帖子': 'bbs/book_list.aspx?action=my',
+      '信箱': 'bbs/messagelist.aspx?siteid=1000',
+    };
+    final found = <String, String>{};
+    try {
+      final html = await _fetch('wapindex.aspx?siteid=1000');
+      final doc = html_parser.parse(html);
+      for (final anchor in doc.querySelectorAll('a[href]')) {
+        final text = anchor.text.trim();
+        if (text.isEmpty) continue;
+        for (final label in labels) {
+          if (found.containsKey(label)) continue;
+          if (text == label || text.startsWith(label)) {
+            final href = anchor.attributes['href'] ?? '';
+            if (href.isNotEmpty) found[label] = _absolute(href);
+          }
+        }
+      }
+    } catch (_) {
+      // 取不到就用兜底地址，入口本身不该因为一次请求失败而消失。
+    }
+    return <({String label, String url})>[
+      for (final label in labels) (label: label, url: found[label] ?? _absolute(fallback[label]!)),
+    ];
+  }
+
   Future<YaohuoThread> fetchThread(String url) async {
     final html = await _fetch(url);
     return parseThread(html, url);
