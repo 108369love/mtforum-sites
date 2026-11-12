@@ -194,7 +194,13 @@ class _YaohuoBoardsPageState extends State<YaohuoBoardsPage> {
         actions: [
           IconButton(
             tooltip: '发帖',
-            onPressed: () => Navigator.of(context).push(appRoute(builder: (_) => const YaohuoComposePage())),
+            // 版块页的发帖走浏览器：站点发帖页有附件/草稿/图床这些原生还没做的入口。
+            onPressed: () => Navigator.of(context).push(
+              appRoute(builder: (_) => const InternalBrowserPage(
+                url: 'https://yaohuo.me/bbs/book_view_add.aspx?classid=177',
+                title: '发帖',
+              )),
+            ),
             icon: const Icon(Icons.edit_outlined),
           ),
         ],
