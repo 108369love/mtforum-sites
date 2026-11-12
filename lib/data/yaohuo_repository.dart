@@ -296,7 +296,13 @@ class YaohuoRepository {
   }
 
   /// 回帖：照站点表单 POST，成功与否看返回页的提示。
-  Future<String> reply({required YaohuoThread thread, required String content, required String referer}) async {
+  Future<String> reply({
+    required YaohuoThread thread,
+    required String content,
+    required String referer,
+    String face = '',
+    bool notify = true,
+  }) async {
     if (thread.replyAction.isEmpty) return '没找到回帖表单，可能需要在浏览器里回复';
     try {
       final body = await _post(
@@ -305,9 +311,9 @@ class YaohuoRepository {
           '__CSRFToken': thread.replyCsrf,
           'content': content,
           'action': 'add',
-          'face': '',
-          'sendmsg': '1',
-          'sendmsg2': '1',
+          'face': face,
+          'sendmsg': notify ? '1' : '0',
+          'sendmsg2': notify ? '1' : '0',
           'id': thread.threadId,
           'classid': thread.classId,
           'siteid': '1000',

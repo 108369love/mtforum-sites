@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../../data/yaohuo_repository.dart';
@@ -26,6 +27,7 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
   bool _loadingMore = false;
   bool _notLoggedIn = false;
   bool _sending = false;
+  bool _favorited = false;
   String? _error;
 
   @override
@@ -47,21 +49,121 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
     if (thread == null) return;
     final ok = await YaohuoRepository.instance.favorite(thread, referer: widget.url);
     if (!mounted) return;
+    if (ok) setState(() => _favorited = true);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(ok ? '收藏成功' : '收藏失败，可能需要在浏览器里操作')));
+      ..showSnackBar(SnackBar(content: Text(ok ? '已收藏，可在「我的收藏」里管理' : '收藏失败，可能需要在浏览器里操作')));
   }
 
-  Future<void> _sendReply() async {
+  /// 站点回复框的样子：多行输入 + 表情 + 通知楼主 + 发送。
+  static const List<({String label, String value})> _faces = <({String label, String value})>[
+    (label: '默认', value: ''),
+    (label: '开心', value: '哈哈.gif'),
+    (label: '支持', value: '酷.gif'),
+    (label: '感谢', value: '谢谢.gif'),
+    (label: '沙发', value: '沙发.gif'),
+    (label: '汗', value: '汗.gif'),
+    (label: '思考', value: '思考.gif'),
+    (label: '亲亲', value: '亲亲.gif'),
+    (label: '囧', value: '囧.gif'),
+    (label: '无语', value: '呃.gif'),
+    (label: '抱走', value: '抱走.gif'),
+  ];
+
+  Future<void> _openComposer() async {
     final thread = _thread;
-    final content = _replyController.text.trim();
-    if (thread == null || content.isEmpty || _sending) return;
+    if (thread == null) return;
+    final controller = TextEditingController(text: _replyController.text);
+    var face = '';
+    var notify = true;
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheet) {
+          final scheme = Theme.of(context).colorScheme;
+          return Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + MediaQuery.viewInsetsOf(context).bottom),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('回复帖子', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.onSurface)),
+                const SizedBox(height: 2),
+                Text(thread.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  minLines: 4,
+                  maxLines: 8,
+                  maxLength: 5000,
+                  style: const TextStyle(fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: '请不要乱打字回复，以免被加黑',
+                    hintStyle: const TextStyle(fontSize: 13),
+                    filled: true,
+                    fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  ),
+                ),
+                SizedBox(
+                  height: 40,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _faces.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 6),
+                    itemBuilder: (context, index) {
+                      final item = _faces[index];
+                      final selected = face == item.value;
+                      return ChoiceChip(
+                        label: Text(item.label, style: const TextStyle(fontSize: 12)),
+                        selected: selected,
+                        onSelected: (_) => setSheet(() => face = item.value),
+                      );
+                    },
+                  ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text('通知楼主', style: TextStyle(fontSize: 13)),
+                  value: notify,
+                  onChanged: (value) => setSheet(() => notify = value),
+                ),
+                Row(
+                  children: [
+                    TextButton(onPressed: () => Navigator.pop(sheetContext, false), child: const Text('取消')),
+                    const Spacer(),
+                    FilledButton.icon(
+                      onPressed: () => Navigator.pop(sheetContext, true),
+                      icon: const Icon(Icons.send_rounded, size: 18),
+                      label: const Text('发送'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    if (confirmed != true) return;
+    final content = controller.text.trim();
+    if (content.isEmpty) {
+      controller.dispose();
+      return;
+    }
     setState(() => _sending = true);
     final message = await YaohuoRepository.instance.reply(
       thread: thread,
       content: content,
       referer: widget.url,
+      face: face,
+      notify: notify,
     );
+    controller.dispose();
     if (!mounted) return;
     setState(() => _sending = false);
     ScaffoldMessenger.of(context)
@@ -69,7 +171,6 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
       ..showSnackBar(SnackBar(content: Text(message)));
     if (message.contains('成功')) {
       _replyController.clear();
-      _replyFocus.unfocus();
       await _load();
     }
   }
@@ -150,9 +251,12 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
         actions: [
           if (thread != null)
             IconButton(
-              tooltip: '收藏',
+              tooltip: _favorited ? '已收藏' : '收藏',
               onPressed: _favorite,
-              icon: const Icon(Icons.star_outline_rounded),
+              icon: Icon(
+                _favorited ? Icons.star_rounded : Icons.star_outline_rounded,
+                color: _favorited ? Colors.amber : null,
+              ),
             ),
           IconButton(tooltip: '刷新', onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
           IconButton(
@@ -177,36 +281,30 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
           decoration: BoxDecoration(
             border: Border(top: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5))),
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _replyController,
-                  focusNode: _replyFocus,
-                  minLines: 1,
-                  maxLines: 3,
-                  textInputAction: TextInputAction.newline,
-                  style: const TextStyle(fontSize: 13),
-                  decoration: InputDecoration(
-                    hintText: '回复这个帖子…',
-                    hintStyle: const TextStyle(fontSize: 13),
-                    filled: true,
-                    fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(22),
+            onTap: _sending ? null : _openComposer,
+            child: Container(
+              height: 44,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.edit_outlined, size: 18, color: scheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _sending ? '正在发送…' : '回复这个帖子…',
+                      style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+                    ),
                   ),
-                ),
+                  Icon(Icons.send_rounded, size: 20, color: scheme.primary),
+                ],
               ),
-              const SizedBox(width: 6),
-              IconButton(
-                tooltip: '发送',
-                onPressed: _sending ? null : _sendReply,
-                icon: _sending
-                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.send_rounded),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -259,8 +357,7 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
           style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
         ),
         const SizedBox(height: 14),
-        if (thread.bodyText.isNotEmpty)
-          SelectableText(thread.bodyText, style: const TextStyle(fontSize: 14, height: 1.75)),
+        if (thread.bodyText.isNotEmpty) _linkedBody(context, thread.bodyText, scheme),
         if (thread.images.isNotEmpty) ...[
           const SizedBox(height: 12),
           for (final image in thread.images)
@@ -318,6 +415,30 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
             child: Text('还没有回复', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
           ),
       ],
+    );
+  }
+
+  /// 正文里裸写的网址也要能点：按 URL 切段，命中段加下划线和点击。
+  Widget _linkedBody(BuildContext context, String text, ColorScheme scheme) {
+    final pattern = RegExp(r'https?://[^\s，。、；）)]+');
+    final spans = <InlineSpan>[];
+    var index = 0;
+    for (final match in pattern.allMatches(text)) {
+      if (match.start > index) spans.add(TextSpan(text: text.substring(index, match.start)));
+      final url = match.group(0) ?? '';
+      if (url.isNotEmpty) {
+        spans.add(TextSpan(
+          text: url,
+          style: TextStyle(color: scheme.primary, decoration: TextDecoration.underline),
+          recognizer: TapGestureRecognizer()..onTap = () => _openBrowser(url, title: url),
+        ));
+      }
+      index = match.end;
+    }
+    if (index < text.length) spans.add(TextSpan(text: text.substring(index)));
+    return Text.rich(
+      TextSpan(children: spans),
+      style: TextStyle(fontSize: 14, height: 1.75, color: scheme.onSurface),
     );
   }
 
