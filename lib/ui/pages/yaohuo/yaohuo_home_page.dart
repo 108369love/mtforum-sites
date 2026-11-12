@@ -21,7 +21,9 @@ class YaohuoHomePage extends StatelessWidget {
     return DefaultTabController(
       length: 4,
       child: Scaffold(
-        body: Column(
+        body: SafeArea(
+          bottom: false,
+          child: Column(
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 8, 4, 4),
@@ -51,13 +53,13 @@ class YaohuoHomePage extends StatelessWidget {
                     ),
                   ),
                   IconButton(
-                    tooltip: '搜索',
+                    tooltip: '发帖',
                     onPressed: () => _openBrowser(
                       context,
-                      'https://yaohuo.me/bbs/book_list_search.aspx?type=pub&classid=0',
-                      '搜索',
+                      'https://yaohuo.me/bbs/book_view_add.aspx?classid=177',
+                      '发帖',
                     ),
-                    icon: const Icon(Icons.search_rounded),
+                    icon: const Icon(Icons.create_outlined),
                   ),
                   IconButton(
                     tooltip: '消息',
@@ -71,15 +73,34 @@ class YaohuoHomePage extends StatelessWidget {
                 ],
               ),
             ),
-            const TabBar(
-              labelStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-              unselectedLabelStyle: TextStyle(fontSize: 14),
-              indicatorSize: TabBarIndicatorSize.label,
-              tabs: <Widget>[
-                Tab(text: '最新'),
-                Tab(text: '回复'),
-                Tab(text: '热门'),
-                Tab(text: '精华'),
+            Row(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(left: 6, right: 2),
+                  child: TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: const Size(0, 34),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: () => _openBrowser(context, 'https://yaohuo.me/myfile.aspx', '我的地盘'),
+                    child: const Text('地盘', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                  ),
+                ),
+                Expanded(
+                  child: TabBar(
+                    labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                    unselectedLabelStyle: const TextStyle(fontSize: 14),
+                    indicatorSize: TabBarIndicatorSize.label,
+                    tabs: const <Widget>[
+                      Tab(text: '最新'),
+                      Tab(text: '回复'),
+                      Tab(text: '热门'),
+                      Tab(text: '精华'),
+                    ],
+                  ),
+                ),
               ],
             ),
             Expanded(
@@ -115,6 +136,7 @@ class YaohuoHomePage extends StatelessWidget {
               ),
             ),
           ],
+          ),
         ),
         floatingActionButton: FloatingActionButton.extended(
           heroTag: 'yaohuo-compose',
