@@ -518,7 +518,23 @@ class YaohuoRepository {
     for (final bold in doc.querySelectorAll('b')) {
       final label = bold.text.replaceAll(RegExp(r'[:：]\s*$'), '').trim();
       if (label.isEmpty || label.length > 8) continue;
-      final value = bold.nextNode?.text?.trim() ?? '';
+      final parent = bold.parent;
+      if (parent == null) continue;
+      final siblings = parent.nodes;
+      final index = siblings.indexOf(bold);
+      if (index < 0) continue;
+      var value = '';
+      for (var i = index + 1; i < siblings.length; i++) {
+        final node = siblings[i];
+        if (node is dom.Text) {
+          value += node.text;
+          if (value.trim().isNotEmpty) break;
+        } else {
+          // 跳过 <br> 这类空元素，遇到真正的内容元素就停。
+          if (node is dom.Element && node.localName != 'br') break;
+        }
+      }
+      value = value.trim();
       if (value.isEmpty || value.length > 40) continue;
       info.putIfAbsent(label, () => value);
     }
