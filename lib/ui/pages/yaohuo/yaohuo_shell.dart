@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'yaohuo_home_page.dart';
 import 'yaohuo_profile_page.dart';
-import 'yaohuo_hot_page.dart';
+import 'yaohuo_search_page.dart';
 
 /// 妖火的原生主框架：和 MT论坛 一样四栏（首页 / 版块 / 搜索 / 我的）。
 class YaohuoShell extends StatefulWidget {
@@ -18,7 +18,7 @@ class _YaohuoShellState extends State<YaohuoShell> {
   late final List<Widget> _pages = <Widget>[
     const YaohuoHomePage(),
     const YaohuoBoardsPage(),
-    const YaohuoHotPage(),
+    YaohuoSearchPage(onBack: () => setState(() => _index = 0)),
     const YaohuoProfilePage(),
   ];
 
@@ -41,9 +41,9 @@ class _YaohuoShellState extends State<YaohuoShell> {
             label: '版块',
           ),
           NavigationDestination(
-            icon: Icon(Icons.local_fire_department_outlined),
-            selectedIcon: Icon(Icons.local_fire_department_rounded),
-            label: '热门',
+            icon: Icon(Icons.search_rounded),
+            selectedIcon: Icon(Icons.search_rounded),
+            label: '搜索',
           ),
           NavigationDestination(
             icon: Icon(Icons.person_outline_rounded),

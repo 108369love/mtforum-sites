@@ -7,55 +7,120 @@ import 'yaohuo_compose_page.dart';
 import 'yaohuo_search_page.dart';
 import 'yaohuo_thread_list.dart';
 
-/// 妖火首页：最新 / 精华 两条流。
+/// 妖火首页：照 MT论坛 首頁复刻——标题 + 搜索/消息、四个 Tab、卡片流、悬浮发帖。
 class YaohuoHomePage extends StatelessWidget {
   const YaohuoHomePage({super.key});
 
+  void _openBrowser(BuildContext context, String url, String title) {
+    Navigator.of(context).push(appRoute(builder: (_) => InternalBrowserPage(url: url, title: title)));
+  }
+
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return DefaultTabController(
-      length: 2,
+      length: 4,
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text('妖火网'),
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: '最新'),
-              Tab(text: '精华'),
-            ],
-          ),
-          actions: [
-            IconButton(
-              tooltip: '发帖',
-              onPressed: () => Navigator.of(context).push(appRoute(builder: (_) => const YaohuoComposePage())),
-              icon: const Icon(Icons.add_rounded),
-            ),
-            IconButton(
-              tooltip: '用浏览器打开',
-              onPressed: () => Navigator.of(context).push(
-                appRoute(builder: (_) => const InternalBrowserPage(url: 'https://yaohuo.me/', title: '妖火网')),
+        body: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 8, 4, 4),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [scheme.primary, scheme.primary.withValues(alpha: 0.7)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.forum_rounded, color: Colors.white, size: 22),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('妖火论坛', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+                        Text('共同兴趣爱好的社区', style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '搜索',
+                    onPressed: () => _openBrowser(
+                      context,
+                      'https://yaohuo.me/bbs/book_list_search.aspx?type=pub&classid=0',
+                      '搜索',
+                    ),
+                    icon: const Icon(Icons.search_rounded),
+                  ),
+                  IconButton(
+                    tooltip: '消息',
+                    onPressed: () => _openBrowser(
+                      context,
+                      'https://yaohuo.me/bbs/messagelist.aspx?siteid=1000',
+                      '信箱',
+                    ),
+                    icon: const Icon(Icons.notifications_none_rounded),
+                  ),
+                ],
               ),
-              icon: const Icon(Icons.open_in_browser_rounded),
+            ),
+            const TabBar(
+              labelStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+              unselectedLabelStyle: TextStyle(fontSize: 14),
+              indicatorSize: TabBarIndicatorSize.label,
+              tabs: <Widget>[
+                Tab(text: '最新'),
+                Tab(text: '回复'),
+                Tab(text: '热门'),
+                Tab(text: '精华'),
+              ],
+            ),
+            Expanded(
+              child: TabBarView(
+                children: <Widget>[
+                  YaohuoThreadListView(
+                    key: const PageStorageKey<String>('yaohuo-new'),
+                    cards: true,
+                    loader: (page) => YaohuoRepository.instance.fetchThreads(
+                      action: YaohuoRepository.actionNew,
+                      page: page,
+                    ),
+                  ),
+                  YaohuoThreadListView(
+                    key: const PageStorageKey<String>('yaohuo-active'),
+                    cards: true,
+                    loader: (page) => YaohuoRepository.instance.fetchThreads(action: 'active', page: page),
+                  ),
+                  YaohuoThreadListView(
+                    key: const PageStorageKey<String>('yaohuo-hot'),
+                    cards: true,
+                    loader: (page) => YaohuoRepository.instance.fetchHotThreads(days: 1, page: page),
+                  ),
+                  YaohuoThreadListView(
+                    key: const PageStorageKey<String>('yaohuo-good'),
+                    cards: true,
+                    loader: (page) => YaohuoRepository.instance.fetchThreads(
+                      action: YaohuoRepository.actionGood,
+                      page: page,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
-        body: TabBarView(
-          children: [
-            YaohuoThreadListView(
-              key: const PageStorageKey<String>('yaohuo-new'),
-              loader: (page) => YaohuoRepository.instance.fetchThreads(
-                action: YaohuoRepository.actionNew,
-                page: page,
-              ),
-            ),
-            YaohuoThreadListView(
-              key: const PageStorageKey<String>('yaohuo-good'),
-              loader: (page) => YaohuoRepository.instance.fetchThreads(
-                action: YaohuoRepository.actionGood,
-                page: page,
-              ),
-            ),
-          ],
+        floatingActionButton: FloatingActionButton.extended(
+          heroTag: 'yaohuo-compose',
+          onPressed: () => Navigator.of(context).push(appRoute(builder: (_) => const YaohuoComposePage())),
+          icon: const Icon(Icons.edit_outlined),
+          label: const Text('发帖'),
         ),
       ),
     );

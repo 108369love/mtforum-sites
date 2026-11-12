@@ -9,10 +9,18 @@ import 'yaohuo_thread_page.dart';
 ///
 /// 只负责「一页一页往下拉」这件事，取数交给传进来的 [loader]。
 class YaohuoThreadListView extends StatefulWidget {
-  const YaohuoThreadListView({super.key, required this.loader, this.emptyText = '这里还没有帖子'});
+  const YaohuoThreadListView({
+    super.key,
+    required this.loader,
+    this.emptyText = '这里还没有帖子',
+    this.cards = false,
+  });
 
   final Future<List<YaohuoThreadItem>> Function(int page) loader;
   final String emptyText;
+
+  /// 卡片样式（首页用，和 MT论坛 的 feed 一致）；列表样式给板块/搜索用。
+  final bool cards;
 
   @override
   State<YaohuoThreadListView> createState() => _YaohuoThreadListViewState();
@@ -101,6 +109,69 @@ class _YaohuoThreadListViewState extends State<YaohuoThreadListView> with Automa
     await Navigator.of(context).push(appRoute(builder: (_) => YaohuoThreadPage(url: item.url, title: item.title)));
   }
 
+  Widget _card(BuildContext context, YaohuoThreadItem item, ColorScheme scheme) {
+    final initial = item.author.isEmpty ? '妖' : item.author.substring(0, 1);
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: () => _openThread(item),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.45)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 15,
+                  backgroundColor: scheme.primary.withValues(alpha: 0.14),
+                  child: Text(
+                    initial,
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: scheme.primary),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    item.author.isEmpty ? '妖友' : item.author,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                if (item.time.isNotEmpty)
+                  Text(item.time, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              item.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, height: 1.35),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(Icons.chat_bubble_outline_rounded, size: 13, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 3),
+                Text(item.reply.isEmpty ? '0' : item.reply, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+                const SizedBox(width: 12),
+                Icon(Icons.visibility_outlined, size: 13, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 3),
+                Text(item.read.isEmpty ? '0' : item.read, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -151,6 +222,30 @@ class _YaohuoThreadListViewState extends State<YaohuoThreadListView> with Automa
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 60, 24, 24),
           children: [Center(child: Text(widget.emptyText))],
+        ),
+      );
+    }
+    if (widget.cards) {
+      return RefreshIndicator(
+        onRefresh: _load,
+        child: ListView.separated(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
+          itemCount: _items.length + 1,
+          separatorBuilder: (_, __) => const SizedBox(height: 10),
+          itemBuilder: (context, index) {
+            if (index == _items.length) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Center(
+                  child: _loadingMore
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                      : TextButton(onPressed: _loadMore, child: const Text('加载更多')),
+                ),
+              );
+            }
+            return _card(context, _items[index], scheme);
+          },
         ),
       );
     }

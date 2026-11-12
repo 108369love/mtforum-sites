@@ -5,9 +5,12 @@ import 'yaohuo_thread_list.dart';
 
 /// 妖火搜索：站内按标题搜。
 class YaohuoSearchPage extends StatefulWidget {
-  const YaohuoSearchPage({super.key, this.initialQuery = ''});
+  const YaohuoSearchPage({super.key, this.initialQuery = '', this.onBack});
 
   final String initialQuery;
+
+  /// 作为底栏 tab 时的返回动作（切回首页）；从版块页进来时留空，走路由 pop。
+  final VoidCallback? onBack;
 
   @override
   State<YaohuoSearchPage> createState() => _YaohuoSearchPageState();
@@ -46,7 +49,16 @@ class _YaohuoSearchPageState extends State<YaohuoSearchPage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('搜索')),
+      appBar: AppBar(
+        leading: widget.onBack == null
+            ? null
+            : IconButton(
+                tooltip: '返回',
+                onPressed: widget.onBack,
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+        title: const Text('搜索'),
+      ),
       body: Column(
         children: [
           Padding(
