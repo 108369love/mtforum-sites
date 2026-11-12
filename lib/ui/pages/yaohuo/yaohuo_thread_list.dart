@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../data/yaohuo_repository.dart';
@@ -59,6 +62,7 @@ class _YaohuoThreadListViewState extends State<YaohuoThreadListView> with Automa
         _page = 1;
         _loading = false;
       });
+      if (widget.cards) unawaited(_enrichTimes());
     } on YaohuoNotLoggedIn {
       if (!mounted) return;
       setState(() {
@@ -72,6 +76,32 @@ class _YaohuoThreadListViewState extends State<YaohuoThreadListView> with Automa
         _loading = false;
       });
     }
+  }
+
+  /// 列表页只有「今天 晚上」这种半天粒度，精确到分要回帖子页取。
+  /// 只补卡片模式下的前 10 条、3 并发，失败就保留站点原始文案。
+  Future<void> _enrichTimes() async {
+    final targets = _items
+        .where((item) => item.publishedAt == null)
+        .take(10)
+        .toList();
+    if (targets.isEmpty) return;
+    var cursor = 0;
+    Future<void> worker() async {
+      while (cursor < targets.length) {
+        final index = cursor++;
+        final item = targets[index];
+        final time = await YaohuoRepository.instance.fetchPublishedAt(item.url);
+        if (time == null || !mounted) continue;
+        final position = _items.indexWhere((candidate) => candidate.url == item.url);
+        if (position < 0) continue;
+        setState(() => _items[position] = _items[position].copyWith(publishedAt: time));
+      }
+    }
+
+    await Future.wait(<Future<void>>[
+      for (var i = 0; i < math.min(3, targets.length); i++) worker(),
+    ]);
   }
 
   Future<void> _loadMore() async {
@@ -109,8 +139,33 @@ class _YaohuoThreadListViewState extends State<YaohuoThreadListView> with Automa
     await Navigator.of(context).push(appRoute(builder: (_) => YaohuoThreadPage(url: item.url, title: item.title)));
   }
 
+  String? _boardName(int? classId) {
+    if (classId == null) return null;
+    for (final board in YaohuoRepository.boards) {
+      if (board.id == classId) return board.name;
+    }
+    return null;
+  }
+
+  String _clock(DateTime time) =>
+      '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+
+  String _relative(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return '刚刚';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} 分钟前';
+    if (diff.inHours < 24) return '${diff.inHours} 小时前';
+    if (diff.inDays < 30) return '${diff.inDays} 天前';
+    return '${time.month} 月 ${time.day} 日';
+  }
+
   Widget _card(BuildContext context, YaohuoThreadItem item, ColorScheme scheme) {
     final initial = item.author.isEmpty ? '妖' : item.author.substring(0, 1);
+    final board = _boardName(item.classId);
+    final published = item.publishedAt;
+    final timeText = published == null
+        ? item.time
+        : <String>[_relative(published), _clock(published)].where((part) => part.isNotEmpty).join(' · ');
     return InkWell(
       borderRadius: BorderRadius.circular(18),
       onTap: () => _openThread(item),
@@ -125,6 +180,7 @@ class _YaohuoThreadListViewState extends State<YaohuoThreadListView> with Automa
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 CircleAvatar(
                   radius: 15,
@@ -136,15 +192,40 @@ class _YaohuoThreadListViewState extends State<YaohuoThreadListView> with Automa
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    item.author.isEmpty ? '妖友' : item.author,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.author.isEmpty ? '妖友' : item.author,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      if (timeText.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            timeText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-                if (item.time.isNotEmpty)
-                  Text(item.time, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+                if (board != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      board,
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.primary),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 8),

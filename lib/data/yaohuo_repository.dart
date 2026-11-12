@@ -21,6 +21,8 @@ class YaohuoThreadItem {
     required this.reply,
     required this.read,
     required this.time,
+    this.classId,
+    this.publishedAt,
   });
 
   final String title;
@@ -28,7 +30,26 @@ class YaohuoThreadItem {
   final String author;
   final String reply;
   final String read;
+
+  /// 站点给的粗粒度时间（「今天 晚上」「11月8日」）。
   final String time;
+
+  /// 帖子所在板块，取自回复链接里的 classid。
+  final int? classId;
+
+  /// 精确发布时间：列表页不给，按需从帖子页补（补不到就是 null）。
+  final DateTime? publishedAt;
+
+  YaohuoThreadItem copyWith({DateTime? publishedAt}) => YaohuoThreadItem(
+        title: title,
+        url: url,
+        author: author,
+        reply: reply,
+        read: read,
+        time: time,
+        classId: classId,
+        publishedAt: publishedAt ?? this.publishedAt,
+      );
 }
 
 /// 一条楼中回复。
@@ -390,6 +411,34 @@ class YaohuoRepository {
       ..sort((a, b) => a.id - b.id);
   }
 
+  /// 精确发布时间（列表页没有，只能抓帖子页），带内存缓存。
+  static final Map<String, DateTime?> _timeCache = <String, DateTime?>{};
+
+  Future<DateTime?> fetchPublishedAt(String url) async {
+    if (_timeCache.containsKey(url)) return _timeCache[url];
+    try {
+      final html = await _fetch(url);
+      final doc = html_parser.parse(html);
+      final text = doc.querySelector('.DateAndTime')?.text.trim() ?? '';
+      final match = RegExp(r'(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})').firstMatch(text);
+      final value = match == null
+          ? null
+          : DateTime(
+              int.parse(match.group(1)!),
+              int.parse(match.group(2)!),
+              int.parse(match.group(3)!),
+              int.parse(match.group(4)!),
+              int.parse(match.group(5)!),
+            );
+      if (_timeCache.length > 400) _timeCache.clear();
+      _timeCache[url] = value;
+      return value;
+    } catch (_) {
+      _timeCache[url] = null;
+      return null;
+    }
+  }
+
   Future<YaohuoThread> fetchThread(String url) async {
     final html = await _fetch(url);
     return parseThread(html, url);
@@ -479,6 +528,14 @@ class YaohuoRepository {
       if (href == null || title.isEmpty) continue;
       final author = element.querySelector('span.louzhunicheng')?.text.trim() ?? '';
       final time = element.querySelector('span.right')?.text.trim() ?? '';
+      int? classId;
+      for (final anchor in element.querySelectorAll('a[href]')) {
+        final href = anchor.attributes['href'] ?? '';
+        if (!href.contains('book_re.aspx')) continue;
+        final match = RegExp(r'classid=(\d+)').firstMatch(href);
+        if (match != null) classId = int.tryParse(match.group(1) ?? '');
+        break;
+      }
       final counts = RegExp(r'(\d+)\s*回\s*/\s*(\d+)\s*阅').firstMatch(element.text);
       items.add(YaohuoThreadItem(
         title: title,
@@ -487,6 +544,7 @@ class YaohuoRepository {
         reply: counts?.group(1) ?? '',
         read: counts?.group(2) ?? '',
         time: time,
+        classId: classId,
       ));
     }
     if (items.isNotEmpty) return items;
