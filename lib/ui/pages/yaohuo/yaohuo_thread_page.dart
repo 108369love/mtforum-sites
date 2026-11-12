@@ -1,8 +1,10 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/video_link.dart';
 import '../../../data/yaohuo_repository.dart';
 import '../../navigation/app_routes.dart';
+import '../../widgets/video_card.dart';
 import '../internal_browser_page.dart';
 import 'yaohuo_login_page.dart';
 
@@ -342,6 +344,25 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
         ],
       );
     }
+    // 正文里的视频：媒体标签和普通链接里能认出来的都算，交给内置播放器。
+    final videos = <VideoLink>[];
+    final seenVideo = <String>{};
+    void collectVideo(String url) {
+      final link = parseVideoLink(url);
+      if (link == null) return;
+      if (!seenVideo.add(link.url)) return;
+      videos.add(link);
+    }
+
+    for (final item in thread.media) {
+      collectVideo(item.url);
+    }
+    for (final link in thread.links) {
+      collectVideo(link.url);
+    }
+    final otherMedia = thread.media.where((item) => parseVideoLink(item.url) == null).toList();
+    final plainLinks = thread.links.where((link) => parseVideoLink(link.url) == null).toList();
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
       children: [
@@ -380,11 +401,25 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
               ),
             ),
         ],
-        if (thread.media.isNotEmpty) ...[
+        if (videos.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text('正文里的视频', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: scheme.onSurfaceVariant)),
+          const SizedBox(height: 6),
+          for (final link in videos)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: VideoCard(
+                video: link,
+                title: link.kind.label,
+                onOpenExternal: () => _openBrowser(link.url, title: link.kind.label),
+              ),
+            ),
+        ],
+        if (otherMedia.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text('正文里的媒体', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: scheme.onSurfaceVariant)),
           const SizedBox(height: 4),
-          for (final item in thread.media)
+          for (final item in otherMedia)
             ListTile(
               contentPadding: EdgeInsets.zero,
               dense: true,
@@ -399,11 +434,11 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
               onTap: () => _openBrowser(item.url, title: item.kind),
             ),
         ],
-        if (thread.links.isNotEmpty) ...[
+        if (plainLinks.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text('正文里的链接', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: scheme.onSurfaceVariant)),
           const SizedBox(height: 4),
-          for (final link in thread.links)
+          for (final link in plainLinks)
             ListTile(
               contentPadding: EdgeInsets.zero,
               dense: true,
