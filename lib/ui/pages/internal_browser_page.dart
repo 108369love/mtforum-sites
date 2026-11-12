@@ -1006,9 +1006,10 @@ $dark''';
               focusNode: _addressFocus,
               textInputAction: TextInputAction.go,
               keyboardType: TextInputType.url,
-              style: const TextStyle(fontSize: 13),
+              textAlignVertical: TextAlignVertical.center,
+              style: const TextStyle(fontSize: 13, height: 1.2),
               decoration: const InputDecoration(
-                isDense: true,
+                isCollapsed: true,
                 border: InputBorder.none,
                 hintText: '输入网址或搜索内容',
                 hintStyle: TextStyle(fontSize: 13),

@@ -36,15 +36,35 @@ class _YaohuoThreadListViewState extends State<YaohuoThreadListView> with Automa
   bool _notLoggedIn = false;
   String? _error;
   int _page = 1;
-
-  @override
-  bool get wantKeepAlive => true;
+  final ScrollController _scroll = ScrollController();
 
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(_onScroll);
     _load();
   }
+
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+    final position = _scroll.position;
+    // 离底部 200px 就预加载下一页，拉到底就能接着看。
+    if (position.pixels >= position.maxScrollExtent - 200) {
+      if (!_loadingMore && !_loading && _error == null && !_notLoggedIn) {
+        unawaited(_loadMore());
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.removeListener(_onScroll);
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  bool get wantKeepAlive => true;
 
   Future<void> _load() async {
     setState(() {
@@ -79,11 +99,11 @@ class _YaohuoThreadListViewState extends State<YaohuoThreadListView> with Automa
   }
 
   /// 列表页只有「今天 晚上」这种半天粒度，精确到分要回帖子页取。
-  /// 只补卡片模式下的前 10 条、3 并发，失败就保留站点原始文案。
+  /// 只补卡片模式下的前 6 条、3 并发，其余保留站点原始文案。
   Future<void> _enrichTimes() async {
     final targets = _items
         .where((item) => item.publishedAt == null)
-        .take(10)
+        .take(6)
         .toList();
     if (targets.isEmpty) return;
     var cursor = 0;
@@ -310,6 +330,7 @@ class _YaohuoThreadListViewState extends State<YaohuoThreadListView> with Automa
       return RefreshIndicator(
         onRefresh: _load,
         child: ListView.separated(
+          controller: _scroll,
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
           itemCount: _items.length + 1,
@@ -333,6 +354,7 @@ class _YaohuoThreadListViewState extends State<YaohuoThreadListView> with Automa
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
+        controller: _scroll,
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.only(bottom: 12),
         itemCount: _items.length + 1,
