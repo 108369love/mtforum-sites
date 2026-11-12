@@ -1,0 +1,828 @@
+
+<div class="comiis_modact bg_b f_c">本主题由 Bin 于 2026-7-28 10:03 加入精华</div>
+<div class="comiis_a comiis_message_table cl"><i class="pstatus"> 本帖最后由 JiGuro 于 2026-6-20 23:47 编辑 </i><br/>
+<br/>
+<strong><font color="#ff0000">【多栈实战】<br/>
+某黑产软件全链路逆向实录 (下) ——<br/>
+从VIP裸链到金币视频JWT泄露越权实战 + 总结</font></strong><br/>
+<br/>
+<font color="Blue">开篇严正声明：本文仅用于学习逆向工程与网络安全相关技术，未掺杂任何不良目的。文中的软件已对其名字、图标及相关敏感信息做了模糊处理，本人也不会提供软件原包样品，内容仅作学习交流使用！同时，本人并未对该软件样本进行任何分享，下载仅做技术研究，均在个人设备上和虚拟设备中进行分析，并已在分析完后删除！</font><br/>
+<br/>
+各位久等了，继中篇之后，最后一篇完结篇在今天发布。中篇对小白来说可能难度较高，但是下篇相对来说较为简单，主要学的是思路。建议各位备好花生、瓜子，慢慢细品，看得爽就行<img alt="" border="0" smilieid="1229" src="https://cdn.binmt.cc/static/image/smiley/qq/qq014.gif"/><br/>
+如果还有没看过上、中篇的，可以先去把上篇和中篇看看，再来看本篇思路会更加清晰：<br/>
+<font color="#ff0000">【多栈实战】某黑产软件全链路逆向实录 (上)</font>（<a href="https://bbs.binmt.cc/thread-167215-1-1.html" target="_blank">https://bbs.binmt.cc/thread-167215-1-1.html</a>）<br/>
+<font color="#ff0000">【多栈实战】某黑产软件全链路逆向实录 (中)</font>（<a href="https://bbs.binmt.cc/thread-167438-1-1.html" target="_blank">https://bbs.binmt.cc/thread-167438-1-1.html</a>）<br/>
+<br/>
+希望各位能够耐心看完，感谢大家的支持与理解！<br/>
+<br/>
+<strong><font color="Red">一、初探</font></strong><br/>
+<br/>
+现在进入正题，我们先梳理一下我们在中篇中干了啥：<br/>
+中篇从抓包切入，绕过<font color="#ff0000"> Flutter 代理</font>与<font color="#ff0000">证书限制</font>，定位到 <font color="#ff0000">protobuf 请求</font>及四重签名校验；通过 <font color="#ff0000">Blutter </font>逆向还原 <font color="#ff0000">Dart </font>层邀请码读取、防重机制与 <font color="#ff0000">SHA256 签名算法</font>，并逆向 Web 端获取共享密钥，破解 <font color="#ff0000">x-sign </font>算法，最终编写注册机伪造邀请请求成功批量获取 VIP 会员。<br/>
+<br/>
+但是，虽然获取了无限 VIP 会员，但是该黑产团伙所运营的平台只有 VIP 会员是不能够浏览平台中的所有流媒体视频的，VIP 会员只能观看 VIP 视频。而平台上的视频中还有一类视频，需要购买金币或者开通 SVIP 会员才能观看，以下简称<font color="#ff0000">金币视频</font><img alt="" border="0" smilieid="1268" src="https://cdn.binmt.cc/static/image/smiley/qq/qq011.gif"/><br/>
+SVIP 会员的获取，只能通过购买的方式，平台方并未举办任何活动，用户也不能通过其他渠道来获取。该篇中，我们主要讲的就是绕过 SVIP 会员的限制，获取<font color="#ff0000">金币视频</font>的完整内容。<br/>
+<br/>
+由于我们在中篇已经知道，软件端和 Web 端并无区别，所以这期我们选择全程在 Web 端进行逆向和分析。<br/>
+<br/>
+现在，我们先对整个网站进行整体观察，分析网站的技术栈，这是前篇没有讲到的。<br/>
+<br/>
+我们同样先下载最关键的 <font color="Red">index-DnaOsGrt.js </font>，像上期一样，通过关键词来查找，输入一些常见栈的关键词。<br/>
+<br/>
+<img alt="" border="0" src="https://icdn.binmt.cc/2606/6a3660d4a6100.jpeg"/><br/>
+<br/>
+<i>注：这里由于项目构建的原因，与文中的文件名不一样</i><br/>
+<br/>
+<font color="Blue">1、识别构建工具</font><br/>
+<br/>
+输入以下命令：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>grep -n "modulepreload" index-DnaOsGrt_beauty.js<br/>
+</li><li># 输出 modulepreload polyfill<br/>
+</li><li><br/>
+</li><li>grep -n "webpackJsonp" index-DnaOsGrt_beauty.js<br/>
+</li><li># 输出 (空) 没有找到！</li></ol></div></div><br/>
+<br/>
+我们可以根据结果找到以下代码：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>// Vite 的 modulepreload polyfill<br/>
+</li><li>if (t &amp;&amp; t.supports &amp;&amp; t.supports("modulepreload")) return;<br/>
+</li><li>for (const i of document.querySelectorAll('link[rel="modulepreload"]')) n(i);</li></ol></div></div><br/>
+<br/>
+我们可以确认网站使用 <strong>Vite</strong> 构建。因为文件开头有以上 <strong>Vite</strong> 的 modulepreload 自动注入代码。<br/>
+<br/>
+<font color="Blue">2、识别前端框架<br/>
+</font><br/>
+<br/>
+搜索 <strong>React</strong> 的核心标识：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>grep -n "react-dom" index-DnaOsGrt_beauty.js<br/>
+</li><li># 输出: rendererPackageName: "react-dom"<br/>
+</li><li><br/>
+</li><li>grep -n "createRoot" index-DnaOsGrt_beauty.js<br/>
+</li><li># 输出: 可找到 createRoot API 调用<br/>
+</li><li><br/>
+</li><li>grep -n "react-jsx-runtime" index-DnaOsGrt_beauty.js<br/>
+</li><li># 输出: 确认使用 JSX 编译模式</li></ol></div></div><br/>
+<br/>
+我们可以得知，网站使用 <strong>React 18</strong>（使用 createRoot 而非旧的 ReactDOM.render），生产版本（producation.min）。<br/>
+<br/>
+然后看路由：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>grep -n "@remix-run/router" index-DnaOsGrt_beauty.js<br/>
+</li><li># 输出: 版本信息 v1.23.1</li></ol></div></div><br/>
+<br/>
+我们得知是 <strong>React Router v6</strong>（内含 @remix-run/router v1.23.1）。<br/>
+<br/>
+<font color="Blue">3、识别UI组件库</font><br/>
+<br/>
+很多网站通常会使用 <strong>Ant Design</strong> 或 <strong>Element Plus</strong>。但这个网站不同，搜索不到任何完整的 UI 框架名称。<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li># 搜索有没有 Ant Design<br/>
+</li><li>grep -n "antd\|ant-design\|@ant-design" index-DnaOsGrt_beauty.js<br/>
+</li><li># 输出: (空)<br/>
+</li><li><br/>
+</li><li># 搜索 Radix UI（headless 组件库）<br/>
+</li><li>grep -n "radix-ui" index-DnaOsGrt_beauty.js<br/>
+</li><li># 输出: Symbol.for("radix-ui") ← 找到了！<br/>
+</li><li><br/>
+</li><li># 搜索 CSS-in-JS 方案<br/>
+</li><li>grep -n "data-styled" index-DnaOsGrt_beauty.js<br/>
+</li><li># 输出: 找到 styled-components 运行时<br/>
+</li><li><br/>
+</li><li># 搜索图标库<br/>
+</li><li>grep -n "lucide-react" index-DnaOsGrt_beauty.js<br/>
+</li><li># 输出: @license lucide-react v0.462.0 - ISC<br/>
+</li><li># 还有大量 wr("Check", ...) / wr("ChevronDown", ...) 图标组件</li></ol></div></div><br/>
+<br/>
+我们可以根据以上结构推断，UI 组件库:不是 Ant Design，而是 <strong>Radix UI</strong>（headless 组件库）<br/>
+CSS 方案: <strong>styled-components</strong>（运行时 CSS-in-JS）<br/>
+图标库: <strong>lucide-react v0.462.0</strong><br/>
+<br/>
+<font color="Blue">4、识别跨平台框架</font><br/>
+<br/>
+搜索 <strong>Capacitor</strong>——这是将 Web 应用打包成 iOS/Android 原生 App 的框架：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>grep -n "Capacitor" index-DnaOsGrt_beauty.js<br/>
+</li><li><br/>
+</li><li>输出了大量 Capacitor 相关的代码：<br/>
+</li><li><br/>
+</li><li>/*! Capacitor: [url=https://capacitorjs.com/]https://capacitorjs.com/[/url] - MIT License */<br/>
+</li><li>CapacitorCookies<br/>
+</li><li>CapacitorHttp<br/>
+</li><li>CapacitorCustomPlatform<br/>
+</li><li>CapacitorPlatforms<br/>
+</li><li>CapacitorWebListener<br/>
+</li><li></li></ol></div></div><br/>
+<br/>
+这就可以验证我们之前的结论，APP 端和 Web 端，本质上就是一个项目。它使用 <strong>Capacitor</strong> 将 Web 代码打包成 iOS/Android 原生 App。这就解释了为什么代码中有大量"原生平台 vs Web 平台"的兼容逻辑（比如 base64 编码请求体、模拟 Cookie 机制）<br/>
+<br/>
+其余不太重要的步骤我已经省略，通过以上步骤，我们可以绘制出完整的技术栈图谱：<br/>
+<br/>
+<img alt="" border="0" src="https://icdn.binmt.cc/2606/6a365ae85a330.png"/><br/>
+<br/>
+分析完网站整体架构，我们就可以看我们今天的主题——流媒体了<img alt="" border="0" smilieid="1206" src="https://cdn.binmt.cc/static/image/smiley/qq/qq015.gif"/><br/>
+我们先打开一个金币视频看看，发现和 VIP 视频相同，只有15秒的试看时间，超过15秒会弹窗：<br/>
+<br/>
+<br/>
+<br/>
+我们可以看到，该视频有两个链路，一个是<strong>普通链路</strong>，一个是<strong>极速高清</strong>，这两个链路其实没什么区别，我们就以普通链路为例进行分析。<br/>
+<br/>
+<br/>
+<br/>
+我们抓取试看视频的链接，观察链接结构：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> https://preview.xxx.vip/api/s3/p2/preview/15763/905b1def4a3873cfd9/preview/index.m3u8?line=ec58802c&amp;t=1781913600&amp;n=0c2bfef7d85b88dadba5ca105ac86781&amp;s=6892807722b9a33a&amp;_nk=1</blockquote></div><br/>
+<br/>
+<br/>
+<br/>
+<br/>
+我们将路径分段解析：<br/>
+<br/>
+<img alt="" border="0" src="https://icdn.binmt.cc/2606/6a365a5e38eb8.png"/><br/>
+<br/>
+然后，我们再看 M3U8 的源内容：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>#EXTM3U<br/>
+</li><li>#EXT-X-VERSION:6<br/>
+</li><li>#EXT-X-TARGETDURATION:6<br/>
+</li><li>#EXT-X-MEDIA-SEQUENCE:0<br/>
+</li><li>#EXT-X-PLAYLIST-TYPE:VOD<br/>
+</li><li>#EXT-X-INDEPENDENT-SEGMENTS<br/>
+</li><li>#EXT-X-KEY:METHOD=AES-128,URI="key_000001.key?_nk=1&amp;line=ec58802c&amp;t=1777652408&amp;n=0c2bfef7d85b88dadba5ca105ac86781&amp;s=02223bd724f46917"<br/>
+</li><li>#EXTINF:6,<br/>
+</li><li>seg_000000.ts?line=ec58802c&amp;t=1777652408&amp;n=0c2bfef7d85b88dadba5ca105ac86781&amp;s=5d7e972e1f5c613f<br/>
+</li><li>#EXTINF:3,<br/>
+</li><li>seg_000001.ts?line=ec58802c&amp;t=1777652408&amp;n=0c2bfef7d85b88dadba5ca105ac86781&amp;s=90373c7f349c5d90<br/>
+</li><li>#EXTINF:3,<br/>
+</li><li>seg_000002.ts?line=ec58802c&amp;t=1777652408&amp;n=0c2bfef7d85b88dadba5ca105ac86781&amp;s=7bba37d0eba748ff<br/>
+</li><li>#EXTINF:3,<br/>
+</li><li>seg_000003.ts?line=ec58802c&amp;t=1777652408&amp;n=0c2bfef7d85b88dadba5ca105ac86781&amp;s=8392ef35df16d89f<br/>
+</li><li>#EXT-X-ENDLIST</li></ol></div></div><br/>
+<br/>
+播放列表中有 4 个分片，总时长 6+3+3+3 = 15 秒，正好是"试看 15 秒"内容。每个分片和密钥文件都有独立的 s= 签名参数。<br/>
+<br/>
+我们可以看到，切片名是有规律的，以 seg_00000{0+n}.ts 的规律排列。这让我们想起了我们之前的教程：<br/>
+<font color="#ff0000">【网络逆向】TS到视频HLS加密简单逆向实录 </font>(<a href="https://bbs.binmt.cc/thread-166021-1-1.html" target="_blank">https://bbs.binmt.cc/thread-166021-1-1.html</a>)<br/>
+这篇文章里讲了一些 M3U8 文件的基础知识，没看过的同学可以先去看一看，之前我们采用 TS 分片穷举的方法，成功获取了完整的视频。<br/>
+<br/>
+不过经过尝试，<font color="#0000ff">seg_000004.ts</font> 及以后的片段都是不存在的，这代表着我们之前的方法失效了，试看视频和完整视频的储存路径本身不一样。<br/>
+<br/>
+接下来怎么办？很多同学可能束手无策。<br/>
+<br/>
+我当时很快就想到了，因为该网站 VIP 视频和金币视频都是来自网站自建服务器而不是第三方 CDN ，我们是否可以根据 VIP 完整视频的地址推测出金币视频完整视频的地址呢？<br/>
+为何会有这种推测？各位注意看文件路径，会发现路径中存在多个 "<font color="#ff0000">preview</font>" 字段，那么我们不难猜想，可能修改这些字段的名称为 "<font color="#ff0000">svip</font>" 等等特定字段，说不定就能直接获取完整视频。<br/>
+<br/>
+带着这种思考，我们复用我们中篇的工具，先给自己的账户来几天 VIP 会员：<br/>
+<br/>
+<img alt="" border="0" src="https://icdn.binmt.cc/2606/6a365e349c405.jpg"/><br/>
+<br/>
+成功，我们随便打开一个 VIP 视频，此时已经能观看完整版了。我们找到 VIP 完整视频的原链接：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> https://vipvod.xxx.vip/api/s3/p2/full/14186/0850ac45ec530238b0/1080p/index.m3u8?line=7aa3f71a&amp;t=1781934913&amp;n=791dd5e3c6fb291b0356278b235134ca&amp;s=99db5b0d9aad89c1&amp;_nk=1</blockquote></div><br/>
+<br/>
+我们发现，链接和参数组成都极为相似，可以说，它们用的应该是同一套后端基础。<br/>
+将两个链接对比，我们发现，完整版视频和预览版视频的区别在于以下几个参数：<br/>
+<br/>
+<strong>子域名：</strong><br/>
+<i>将 preview 改成了 vipvod</i><br/>
+<strong>接口：</strong><br/>
+<i>将 preview 改成了 full</i><br/>
+<strong>目录：</strong><br/>
+<i>将 preview 改成了 1080p</i><br/>
+<br/>
+经过大量视频比对，我们可以总结出以下链接结构：<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>https://{vipvod、norvod或perview}.xxx.vip/api/s3/p2/{full或preview}/{video_id}/{hash}/{quality}/index.m3u8</li></ol></div></div><br/>
+而且，我们还发现一个漏洞，<font color="#ff0000">即 VIP 视频无鉴权</font>。<br/>
+当我们把完整 VIP 视频的链接后方有关参数去除，只留下 M3U8 裸链，我们发现还是可以访问，并返回完整视频。<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li># 直接访问 VIP 的 full M3U8<br/>
+</li><li>url = "https://vipvod.xxx.vip/api/s3/p2/full/14186/0850ac45ec530238b0/1080p/index.m3u8"<br/>
+</li><li># 返回 200！</li></ol></div></div><br/>
+<br/>
+也就是说，后面的参数都是没什么用的，看着吓人，实际上只是只纸老虎。<br/>
+<br/>
+更夸张的是，我们尝试修改路径中的参数：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li># 把 mode 从 full 改成任意字符串<br/>
+</li><li>url = "https://vipvod.xxx.vip/api/s3/p2/abc/30053/xxxxxxxx/1080p/index.m3u8"<br/>
+</li><li># 仍然 200！<br/>
+</li><li><br/>
+</li><li># 子域名改成任意单词<br/>
+</li><li>url = "https://freevod.xxx.vip/api/s3/p2/full/30053/xxxxxxxx/1080p/index.m3u8"<br/>
+</li><li># 仍然 200！</li></ol></div></div><br/>
+<br/>
+这说明什么？说明 VIP 视频所在的 CDN 路径完全没有做访问控制。服务器既不校验 URL 签名，也不校验 JWT，甚至不关心路径参数是否合法<img alt="" border="0" smilieid="1237" src="https://cdn.binmt.cc/static/image/smiley/qq/qq005.gif"/><font color="#ff0000">只要你知道 video_id 和内容哈希 hash，就能直接拿到完整版的 M3U8。</font><br/>
+同时，内部的 TS 和 Key 其实也存在这些漏洞。<br/>
+<br/>
+我们大胆猜测，<font color="#ff0000">金币视频</font>链接可能同样存在如上漏洞。<br/>
+于是，我们尝试将金币视频的链接也改成如下形式：<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> https://vipvod.xxx.vip/api/s3/p2/full/15763/905b1def4a3873cfd9/1080p/index.m3u8</blockquote></div><br/>
+<strong>测试后，服务器竟然返回了签名错误！</strong><img alt="" border="0" smilieid="1287" src="https://cdn.binmt.cc/static/image/smiley/qq/qq002.gif"/><br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> HTTP 403<br/>
+签名错误</blockquote></div><br/>
+<br/>
+<img alt="" border="0" src="https://icdn.binmt.cc/2606/6a3656aad6baa.jpg"/><br/>
+<br/>
+同时经过测验，将后方的 index.m3u8 改成 ts ，仍然存在签名校验，<strong>这表示 M3U8 和 TS 的校验等级是一样的。</strong><br/>
+<br/>
+好，这次有意思了。服务器开始校验签名了。<br/>
+后来梳理，有可能是服务器对 VIP 视频和金币视频做了不同等级的防护，由于金币视频是最高档的视频，所以当然也要动用所有资源对其进行保护。<br/>
+<br/>
+<strong><font color="Red">二、金币视频的 “铜墙铁壁” —— URL Sign</font></strong><br/>
+<br/>
+再三决定之后，我还是决定从 M3U8 入手。怎么解决这个问题呢？我进行了如下几种方法的尝试。<br/>
+<br/>
+<font color="Blue">1、裸链改参数</font><br/>
+<br/>
+既然返回“签名错误”，说明 URL 缺少 s= 参数。我们尝试用 VIP 视频的思路，直接改参数：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> https://vipvod.xxx.vip/api/s3/p2/full/{gold_video_id}/{hash}/1080p/index.m3u8?s=xxxxxxxxxxxxxxxx</blockquote></div><br/>
+<br/>
+这里的 s= 是随便写的。结果当然是：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> HTTP 403<br/>
+签名错误</blockquote></div><br/>
+这说明服务器确实在算 s=。<br/>
+<br/>
+<font color="Blue">2、重放旧链接</font><br/>
+<br/>
+我们又想，也许金币视频和 VIP 视频一样，历史链接的签名不会过期。于是我们从浏览器里抓到一个旧的、已经签名过的金币视频 M3U8 URL，直接用 curl 访问：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>curl "https://vipvod.xxx.vip/api/s3/p2/full/xxxxx/xxxxx/1080p/index.m3u8?line=ec58802c&amp;t=1780732800&amp;n=fc7473fb2f35a36c5341f442bf8cb436&amp;s=0995659c27bcac02"<br/>
+</li><li></li></ol></div></div><br/>
+<br/>
+结果依然是：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> HTTP 403<br/>
+签名错误</blockquote></div><br/>
+<br/>
+这说明签名是有时效性的。服务器会校验 t=（时间戳）和 n=（nonce），不能简单重放。<br/>
+<br/>
+<font color="Blue">3、复用现有算法</font><br/>
+<br/>
+我们注意到，链接中的三个参数和我们之前中篇逆向出来的<font color="#ff0000"> x-sign </font>中所包含的几个请求头非常相似，所以我们可以尝试考虑复用现有算法。<br/>
+但问题是，x-sign 是 32 字节，但是 s 参数却只有 16 个字节，就算更换算法或进行截取，都不匹配。<br/>
+所以我只能放弃这种方法。<br/>
+<br/>
+至此，前面三种方法都尝试了，且都没有效果。<br/>
+理论上，生成 URL 签名的算法都在后端，因为这些链接也是通过 API 接口直接返回的。不过，我抱着试试的心态，回到 JS 代码里，尝试找到相关函数。<br/>
+<br/>
+直接在 JS 中搜索很难找到（s= 太短），但我们可以观察这些参数的组合模式。从 M3U8 中我们看到的完整参数集合是：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>?line={lineId}&amp;t={timestamp}&amp;n={nonce}&amp;s={signature}</li></ol></div></div><br/>
+<br/>
+回到代码中，搜索这些参数的删除/设置操作可以找到关键位置。在 JS 中有一行非常关键的代码：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>yne = ["t", "n", "s", "a", "_st"]</li></ol></div></div><br/>
+<br/>
+搜索 yne 的使用位置，会找到两处核心逻辑：<font color="#ff0000">V_() </font>函数和 <font color="#ff0000">mNe()</font> 函数。它们在设置完 URL 参数后都会删除 <font color="#ff0000">yne </font>中列出的旧参数，然后写入新值。其中最关键的一行是：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>o.parsedUrl.searchParams.set("s", h)</li></ol></div></div><br/>
+<br/>
+这里的<font color="#ff0000"> h</font> 就是 s= 的值。而 <font color="#ff0000">h </font>来自：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>h = SQ({<br/>
+</li><li>    secret: i.secret,<br/>
+</li><li>    mode: o.mode,<br/>
+</li><li>    videoId: o.videoId,<br/>
+</li><li>    lineIdShort: i.signedLineIdShort,<br/>
+</li><li>    variant: o.variant,<br/>
+</li><li>    path: o.relPath,<br/>
+</li><li>    timestamp: i.timestamp,<br/>
+</li><li>    salt: i.salt,<br/>
+</li><li>    authToken: u<br/>
+</li><li>})</li></ol></div></div><br/>
+<br/>
+找到了！s= 的值由 <font color="#ff0000">SQ()</font> 函数生成！<br/>
+继续在 JS 中搜索 <font color="#ff0000">function SQ</font>，找到它的定义：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>function SQ(e) {<br/>
+</li><li>    const t = sge(e),                              //  构建签名负载字符串<br/>
+</li><li>          r = bQ(t, e.secret).toString(),           // HMAC-SHA256 签名<br/>
+</li><li>          n = Number.isFinite(e.maxHexLength) <br/>
+</li><li>              &amp;&amp; (e.maxHexLength ?? 0) &gt; 0 <br/>
+</li><li>              ? Math.floor(e.maxHexLength ?? 16) <br/>
+</li><li>              : 16;<br/>
+</li><li>    return r.length &gt; n ? r.slice(0, n) : r         // 截取前 16 个 hex 字符<br/>
+</li><li>}</li></ol></div></div><br/>
+<br/>
+而 <font color="#ff0000">sge() </font>函数负责将参数拼接成待签名的字符串：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>function sge(e) {<br/>
+</li><li>    const t = e.path.trim().replace(/^\/+/, ""),   // 去掉路径开头的 /<br/>
+</li><li>          r = [<br/>
+</li><li>              e.mode.trim(),                         // 模式：preview / full<br/>
+</li><li>              String(e.videoId),                     // 视频 ID<br/>
+</li><li>              e.lineIdShort.trim(),                  // 线路短 ID<br/>
+</li><li>              e.variant.trim(),                      // 变体：preview / 1080p / 720p<br/>
+</li><li>              t,                                     // 相对路径<br/>
+</li><li>              String(e.timestamp)                    // 时间戳<br/>
+</li><li>          ],<br/>
+</li><li>          n = e.salt?.trim(),                        // 盐值（nonce）<br/>
+</li><li>          i = e.authToken?.trim();                   // 授权令牌<br/>
+</li><li>    // 可选字段按优先级追加<br/>
+</li><li>    return n &amp;&amp; i ? r.push(n, i), n &amp;&amp; r.push(n), i &amp;&amp; r.push(i), r.join("|")<br/>
+</li><li>}</li></ol></div></div><br/>
+<br/>
+所以签名负载的格式是：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> mode|videoId|lineIdShort|variant|relPath|timestamp|salt|authToken</blockquote></div><br/>
+<br/>
+<font color="#0000ff">用 | 分隔各部分，固定 6 个字段 + 可选 2 个字段</font>。例如：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> preview|30405|ec58802c|preview|index.m3u8|1777652271|fc7473fb2f35a36c|xxx.yyy</blockquote></div><br/>
+<br/>
+<font color="#ff0000">e.secret</font> 作为 HMAC 的密钥。<font color="#ff0000">e.secret</font> <font color="#0000ff">其实就是我们中篇分析出的密钥</font>：<font color="Red">6b5hR#7uVhJPZT1zAgA26fPSyx9Zh!Za</font><br/>
+也就是说，<font color="#ff0000">x-sign 和 url sign 实际上使用的是同一个密钥。</font><br/>
+<br/>
+现在我们还要解决一个问题，即 <font color="#ff0000">authToken</font> 。在 <font color="#ff0000">SQ() </font>的参数中，<font color="#ff0000">authToken</font> 如果不是从 URL 的 a= 参数中提取的，就是动态生成的。关键函数是 <font color="#ff0000">G_() </font>和它内部调用的 <font color="#ff0000">ige()</font>，我们来逐行分析：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>function ige(secret, uid) {<br/>
+</li><li>    // uid 格式校验：正整数字符串<br/>
+</li><li>    const num = Jpe(uid);    // 如 "999888777"<br/>
+</li><li>    const key = secret.trim();<br/>
+</li><li>    if (!num || !key) return null;<br/>
+</li><li><br/>
+</li><li>    // uid → 8 字节大整数<br/>
+</li><li>    const uidBytes = rge(num);    <br/>
+</li><li>    // rge: 十进制字符串→ 8字节 Uint8Array，big-endian<br/>
+</li><li>    // "999888777" → [0x00, 0x00, 0x00, 0x00, 0x3B, 0x9A, 0xC9, 0xFF]<br/>
+</li><li><br/>
+</li><li>    // secret → 前 8 字节（UTF-8 编码）<br/>
+</li><li>    const keyBytes = nge(key);<br/>
+</li><li>    // nge: UTF-8 编码后取前 8 字节<br/>
+</li><li>    // "6b5hR#7uVhJPZT1zAgA26fPSyx9Zh!Za" → <br/>
+</li><li>    //   [0x36, 0x62, 0x35, 0x68, 0x52, 0x23, 0x37, 0x75]<br/>
+</li><li><br/>
+</li><li>    // XOR 每个字节<br/>
+</li><li>    const xorResult = new Uint8Array(8);<br/>
+</li><li>    for (let i = 0; i &lt; 8; i++)<br/>
+</li><li>        xorResult[i] = (uidBytes[i] || 0) ^ (keyBytes[i] || 0);<br/>
+</li><li><br/>
+</li><li>    // XOR 结果 → 16 进制字符串（32 hex chars）<br/>
+</li><li>    const hexPart = wQ(xorResult);<br/>
+</li><li><br/>
+</li><li>    // HMAC-SHA256("playback_auth:{hexPart}", secret)<br/>
+</li><li>    const hmac = bQ("playback_auth:" + hexPart, key);<br/>
+</li><li>    const authSig = hmac.toString().slice(0, 8);  // 取前 8 个 hex 字符<br/>
+</li><li><br/>
+</li><li>    // 最终格式："{hexPart}.{authSig}"<br/>
+</li><li>    return hexPart + "." + authSig;<br/>
+</li><li>}</li></ol></div></div><br/>
+<br/>
+综合以上分析，我们可以得出视频播放签名的完整公式：<br/>
+<br/>
+<img alt="" border="0" src="https://icdn.binmt.cc/2606/6a365beb762f7.png"/><br/>
+<br/>
+我们可以写一个 Python 脚本来验证签名是否正确，用现有的签名材料，看是否和最终签名匹配，<strong>verify_sq_sign.py</strong> ：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>def compute_auth_token(secret, uid):<br/>
+</li><li>    uid_bytes = struct.pack("&gt;Q", int(uid))<br/>
+</li><li>    key_bytes = secret.encode("utf-8")[:8]<br/>
+</li><li>    xor = bytes(a ^ b for a, b in zip(uid_bytes, key_bytes))<br/>
+</li><li>    hex_part = xor.hex()<br/>
+</li><li>    msg = f"playback_auth:{hex_part}".encode()<br/>
+</li><li>    sig = hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()[:8]<br/>
+</li><li>    return f"{hex_part}.{sig}"<br/>
+</li><li><br/>
+</li><li># SQ 签名是否匹配<br/>
+</li><li>sign = compute_sq_sign(SECRET, MODE, VIDEO_ID, LINE_ID, VARIANT,<br/>
+</li><li>                       REL_PATH, TIMESTAMP, NONCE, URL_AUTH)<br/>
+</li><li># True！</li></ol></div></div><br/>
+<br/>
+签名匹配！这证明我们的逆向分析没有问题。<br/>
+我们利用以上算法，我们可以直接生成带签名的完整链接，<strong>build_signed_url.py</strong> ：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>def compute_auth_token(secret, uid):<br/>
+</li><li>    import struct<br/>
+</li><li>    uid_bytes = struct.pack("&gt;Q", int(uid))<br/>
+</li><li>    key_bytes = secret.encode("utf-8")[:8]<br/>
+</li><li>    xor = bytes(a ^ b for a, b in zip(uid_bytes, key_bytes))<br/>
+</li><li>    hex_part = xor.hex()<br/>
+</li><li>    msg = f"playback_auth:{hex_part}".encode()<br/>
+</li><li>    sig = hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()[:8]<br/>
+</li><li>    return f"{hex_part}.{sig}"<br/>
+</li><li><br/>
+</li><li>auth_token = compute_auth_token(SIGN_SECRET, uid)<br/>
+</li><li>url = f"https://vipvod.xxx.xip/api/s3/p2/full/{video_id}/{hash}/1080p/index.m3u8"<br/>
+</li><li>      f"?line={line_id}&amp;t={timestamp}&amp;n={nonce}&amp;a={auth_token}"<br/>
+</li><li>      f"&amp;_st={session_token}&amp;s={signature}&amp;_nk=1"<br/>
+</li><li></li></ol></div></div><br/>
+<br/>
+这次请求，返回的不是“签名错误”了，而是：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> HTTP 403<br/>
+令牌无效</blockquote></div><br/>
+<br/>
+好家伙，还有高手？<img alt="" border="0" smilieid="1218" src="https://cdn.binmt.cc/static/image/smiley/qq/qq027.gif"/><br/>
+看来，我们还需要进一步分析。<br/>
+<br/>
+<strong><font color="Red">三、金币视频的 “铜墙铁壁” —— JWT</font></strong><br/>
+<br/>
+看来，金币视频和 VIP 视频之间的区别可不止一个 URL sign ，所谓令牌，指的当然是 <font color="#ff0000">JWT </font>。<br/>
+<font color="#ff0000">JWT ( JSON Web Token )</font>，在中篇已经提过了一些，在这里简单普及一下：<br/>
+<br/>
+<font color="#ff0000">JWT </font>一般由三部分组成，用点号（ . ）分隔：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> xxxxxxxxx.yyyyyyyy.zzzzzzzz<br/>
+       ↑              ↑            ↑  <br/>
+Header      Payload       Signature</blockquote></div><br/>
+<strong>1. Header（头部）</strong><br/>
+<br/>
+包含令牌类型和签名算法：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>{<br/>
+</li><li>  "alg": "HS256",  // 算法：HMAC SHA-256<br/>
+</li><li>  "typ": "JWT"     // 类型：JWT<br/>
+</li><li>}<br/>
+</li><li></li></ol></div></div><br/>
+Base64Url 编码后形成第一部分。<br/>
+<br/>
+<strong>2. Payload（载荷）</strong><br/>
+<br/>
+包含声明（claims），分为三种类型：<br/>
+<br/>
+<font color="Blue">标准声明（Reserved Claims）</font>：<br/>
+ iss  (issuer)：签发者<br/>
+ sub  (subject)：主题（用户ID等）<br/>
+ aud  (audience)：受众<br/>
+ exp  (expiration time)：过期时间（Unix 时间戳）<br/>
+ nbf  (not before)：生效时间<br/>
+ iat  (issued at)：签发时间<br/>
+ jti  (JWT ID)：唯一标识<br/>
+<br/>
+<font color="Blue">公共声明</font>： 自定义但建议避免冲突的字段，如  user_id 、 role <br/>
+<br/>
+<font color="Blue">私有声明</font>： 双方约定的自定义数据<br/>
+<br/>
+Base64Url 编码后形成第二部分。<br/>
+<br/>
+<strong>3. Signature（签名）</strong><br/>
+<br/>
+这是安全性的核心。签名用于验证消息未被篡改，并验证签发者身份。<br/>
+签名生成公式：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>Signature = Base64UrlEncode(<br/>
+</li><li>  HMACSHA256(<br/>
+</li><li>    Base64Url(Header) + "." + Base64Url(Payload),<br/>
+</li><li>    secret<br/>
+</li><li>  )<br/>
+</li><li>)</li></ol></div></div><br/>
+<br/>
+在简单了解过后，那么我们如何获取<font color="#ff0000"> JWT </font>？直接在浏览器中按 F12 ，打开开发者模式，就可以在服务器返回头中的<font color="#ff0000"> session_token </font>头中看到我们的<font color="#ff0000"> JWT </font>：<br/>
+<br/>
+<img alt="" border="0" src="https://icdn.binmt.cc/2606/6a366284f017f.jpeg"/><br/>
+<br/>
+解码后如下：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>{<br/>
+</li><li>  "alg": "HS256",<br/>
+</li><li>  "typ": "JWT"<br/>
+</li><li>}<br/>
+</li><li><br/>
+</li><li>{<br/>
+</li><li>  "sid": "a665796c-4e31-4c56-a434-fa1113920c03",<br/>
+</li><li>  "uid": 880086,<br/>
+</li><li>  "iss": "mediaapps",<br/>
+</li><li>  "aud": "user",<br/>
+</li><li>  "exp": 1781962109,<br/>
+</li><li>  "iat": 1781940509,<br/>
+</li><li>  "jti": "360fdbd3-0c2a-4a2d-8c89-82bad0357901"<br/>
+</li><li>}</li></ol></div></div><br/>
+<br/>
+因为我们是 VIP 用户，所以这条 <font color="#ff0000">JWT </font>是有效的 <font color="#ff0000">VIP JWT</font>。我们把 VIP 用户的 <font color="#ff0000">JWT</font> 放到 _st= 参数里，再次请求<font color="#ff0000">金币视频</font>：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li># 使用 VIP 的 session_token<br/>
+</li><li>session_token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzaWQiOiJhNjY1Nzk2Yy00ZTMxLTRjNTYtYTQzNC1mYTExMTM5MjBjMDMiLCJ1aWQiOjg4MDA4NiwiaXNzIjoibWVkaWFhcHBzIiwiYXVkIjoidXNlciIsImV4cCI6MTc4MTk2MjEwOSwiaWF0IjoxNzgxOTQwNTA5LCJqdGkiOiIzNjBmZGJkMy0wYzJhLTRhMmQtOGM4OS04MmJhZDAzNTc5MDEifQ.thKLQTg..."<br/>
+</li><li><br/>
+</li><li>url = build_m3u8_url(info, uid=567931, line_id="ec58802c", timestamp=..., nonce=..., session_token=session_token)</li></ol></div></div><br/>
+<br/>
+这次返回的是：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> HTTP 403<br/>
+此为金币视频，购买后才能观看</blockquote></div><br/>
+<br/>
+这说明：<br/>
+<font color="Red">1、签名是对的。<br/>
+2、JWT 格式是对的，没有过期。<br/>
+3、但是 VIP 用户的权限不够，金币视频需要 SVIP 权限。<br/>
+4、服务器确实会校验金币视频的 JWT。</font><br/>
+<br/>
+既然 VIP 的<font color="#ff0000"> JWT </font>不够，我们自然想：能不能伪造一个 SVIP 的 <font color="#ff0000">JWT</font>？<img alt="" border="0" smilieid="1214" src="https://cdn.binmt.cc/static/image/smiley/qq/qq033.gif"/><br/>
+我们很容易就知道，服务器校验的其实就是 <strong>uid</strong> ，如果我们通过遍历或者其他方式获取一个 SVIP 账户的 <strong>uid</strong> ，再通过伪造 <font color="#ff0000">JWT</font> ，就可以成功请求。<br/>
+<br/>
+<font color="#ff0000">JWT</font> 的签名是 <font color="#ff0000">HS256</font>，也就是 <font color="#0000ff">HMAC-SHA256(header.payload, secret)</font>。如果我们知道 <font color="#ff0000">secret</font>，就能自己签发任意 <font color="#ff0000">JWT</font>。<br/>
+我们先用已知的 API 签名密钥 6b5hR#... 试了一下，发现不匹配。这种情况也很正常，因为 JWT 本身就是确保安全的签名，不可能将私钥放在前端。<br/>
+<br/>
+我们还尝试了很多常见的<font color="#ff0000"> JWT </font>漏洞：<br/>
+<font color="Red">算法切换攻击：把 alg 改成 none<br/>
+RS256 公钥伪造：如果服务端支持 RS256，尝试用公钥当密钥<br/>
+Kid 注入：尝试加入 kid 字段，或 kid 改成已知值或注入路径<br/>
+修改 uid：尝试直接修改 uid</font><br/>
+<br/>
+结局不出意料，全部失败，服务端返回：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> HTTP 403<br/>
+令牌无效</blockquote></div><br/>
+<br/>
+这说明金币视频的<font color="#ff0000"> CDN JWT </font>校验非常严格。<br/>
+<br/>
+关于 JWT 漏洞，各位可以参考以下这篇文章：<br/>
+【Web安全】JWT常见安全漏洞总结 (<a href="https://jishuzhan.net/article/2056894088054149122" target="_blank">https://jishuzhan.net/article/2056894088054149122</a>)<br/>
+<br/>
+既然伪造<font color="#ff0000"> JWT</font> 不行，我们尝试找密钥。我尝试了：<br/>
+<font color="Red">1、JS 代码中所有可见的类似密钥字符串<br/>
+2、服务器配置文件泄露<br/>
+3、GitHub 上是否有该项目的后端源码或模板<br/>
+4、通过工具对密钥进行爆破</font><br/>
+<br/>
+一无所获。这个密钥确实只在服务端。<br/>
+<br/>
+相信到这里，绝大多数同学都要放弃了<img alt="" border="0" smilieid="1392" src="https://cdn.binmt.cc/static/image/smiley/doge/1.png"/><br/>
+<br/>
+<font color="Red"><strong>四、柳暗花明...又一劫？</strong></font><br/>
+<br/>
+在绝望中，我们开始大量观察金币视频的 URL。我们发现一个奇怪的现象——<font color="#0000ff">金币视频的链接可以分成两类</font>：<br/>
+<br/>
+<font color="Red">类型 A</font>（占 70% 以上）：<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> https://preview.xxx.vip/api/s3/p2/preview/{video id}/abc123def456/preview/index.m3u8<br/>
+                                                                                     ↑<br/>
+                                                                                     哈希段：字母较少，数字较多</blockquote></div><br/>
+<font color="Red">类型 B</font>（占 30% 以下）：<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> https://preview.xxx.vip/api/s3/p2/preview/{video id}/ghijklmnopqrstuvwx/preview/index.m3u8<br/>
+                                                                                    ↑<br/>
+                                                                                    哈希段：字母较多，数字较少</blockquote></div><br/>
+                                                                                    <br/>
+从纯技术角度看，哈希段就是一段随机字符串，理论上不应该有规律。但经验丰富的同学就知道，不同类型的内容（上传批次、转码任务、存储桶）往往会产生不同特征的哈希。类型 B 的哈希看起来像是来自另一批资源，或者另一个存储桶。<br/>
+<br/>
+我们抱着试试看的心态，对<font color="#ff0000">类型 B </font>的金币视频使用 VIP 的裸链方法：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>url = "https://preview.xxx.vip/api/s3/p2/preview/{video id}/ghijklmnopqrstuvwx/preview/index.m3u8"<br/>
+</li><li># 不带任何签名参数<br/>
+</li><li></li></ol></div></div><br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> 结果：<br/>
+HTTP 200 OK<br/>
+# 返回了完整的金币视频</blockquote></div><br/>
+<br/>
+<strong>哇！它居然是裸链开放的！</strong><img alt="" border="0" smilieid="1382" src="https://cdn.binmt.cc/static/image/smiley/doge/21.png"/><br/>
+<br/>
+我们立刻测试了更多<font color="#ff0000">类型 B </font>的金币视频，发现它们大多数都可以裸链访问。而<font color="#ff0000">类型 A</font> 则严格校验签名和<font color="#ff0000"> JWT</font>。<br/>
+<br/>
+当时我们的第一反应是：<font color="#ff0000">类型 B </font>的金币视频是内部人员疏忽，没有加上鉴权。可能时间不够，也可能这批资源还没正式接入新的鉴权系统。<br/>
+这个猜测是有道理的。我们检查了<font color="#ff0000">类型 B </font>的 M3U8 内容，想看看它内部的 <font color="#ff0000">TS</font> 和 <font color="#ff0000">key </font>是否也需要签名。<br/>
+<br/>
+我们下载了<font color="#ff0000">类型 B </font>金币视频的 M3U8 文件，查看它的原始内容。根据 VIP 视频的经验，正常来说，M3U8 应该是这样的：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>#EXTM3U<br/>
+</li><li>#EXT-X-VERSION:6<br/>
+</li><li>#EXT-X-TARGETDURATION:6<br/>
+</li><li>#EXT-X-KEY:METHOD=AES-128,URI="key_000001.key?line=...&amp;t=...&amp;n=...&amp;s=..."<br/>
+</li><li>#EXTINF:6,<br/>
+</li><li>seg_000000.ts?line=...&amp;t=...&amp;n=...&amp;s=...<br/>
+</li><li></li></ol></div></div><br/>
+<br/>
+但我们看到的<font color="#ff0000">类型 B</font> M3U8 里，每一行 URL 后面都带了一个奇怪的参数：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>#EXT-X-KEY:METHOD=AES-128,URI="key_000001.key?line=...&amp;t=...&amp;n=...&amp;s=...&amp;_st=eyJ0eXAiOiJKV1Qi..."<br/>
+</li><li>#EXTINF:6,<br/>
+</li><li>seg_000000.ts?line=...&amp;t=...&amp;n=...&amp;s=...&amp;_st=eyJ0eXAiOiJKV1Qi...</li></ol></div></div><br/>
+<br/>
+<font color="#ff0000">每一行都带了一个 _st= 参数，而且它的值是一个有效的 JWT！</font><br/>
+<br/>
+这是什么？<br/>
+我们立刻解码这个 JWT：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>{<br/>
+</li><li>  "alg": "HS256",<br/>
+</li><li>  "typ": "JWT"<br/>
+</li><li>}<br/>
+</li><li><br/>
+</li><li>{<br/>
+</li><li>  "sid": "7b35ca63-ad27-4400-a43a-2eca7d0586ef",<br/>
+</li><li>  "uid": 567931,<br/>
+</li><li>  "iss": "mediaapps",<br/>
+</li><li>  "aud": "user",<br/>
+</li><li>  "exp": 1781885492,<br/>
+</li><li>  "iat": 1781863892,<br/>
+</li><li>  "jti": "e1d6d0cb-79b6-4433-8999-1cb2234eb4b9"<br/>
+</li><li>}</li></ol></div></div><br/>
+<br/>
+我们可以看到，这个 JWT 和上文准备伪造的 JWT 格式一模一样。由于这是出现在金币 M3U8 文件中的 JWT ，我们之前的分析又得到 TS 分片和 M3U8 的校验等级相同，我们可以大胆猜测：<br/>
+<font color="#ff0000"><strong>这是一个 SVIP 用户的 JWT，且还依然有效！ </strong></font><br/>
+<br/>
+很有可能，服务器在生成金币视频的 M3U8 时，需要为内部的 TS 和 key 填写 _st 参数。正常的请求会自带用户的 JWT，服务器把它写进去。但如果请求没有带 JWT（比如裸链请求），服务器又必须返回有效视频，那它只能从已生成的 SVIP JWT 池中随机抽取一个，填入 M3U8。<br/>
+也就是说，这是一个<strong><font color="#ff0000">信息泄露 / 溢出漏洞。</font></strong><br/>
+<br/>
+<strong>正常请求：</strong><br/>
+<font color="Red">  用户请求 M3U8 → 带 JWT_A → 服务器把 JWT_A 填入 TS/key 的 _st 参数 → 返回</font><br/>
+<br/>
+<strong>裸链请求（无 JWT）：</strong><br/>
+<font color="Red">  用户请求 M3U8 → 无 JWT → 服务器为了返回有效视频 → 从 SVIP 池随机取 JWT_SVIP → 填入 → 返回</font><br/>
+<br/>
+至此，我们发现了全文中最大也是最关键的漏洞。<br/>
+我们肯定不能这样结束，因为我们的最终目标是获取所有的金币视频的完整版本。<br/>
+<br/>
+<strong><font color="Red">五、金币视频的 “铜墙铁壁” —— LineID</font></strong><br/>
+<br/>
+既然我们有了 <font color="#ff0000">SVIP JWT</font>，我们想：能不能用它配合我们之前写的 <strong>build_signed_url.py </strong>脚本，去请求<font color="#ff0000">类型 A</font> 的严格校验金币视频？<br/>
+我们修改了脚本里的 <font color="#ff0000">session_token</font>：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>CONFIG = {<br/>
+</li><li>    "url_prefix": "https://vipvod.xxx.vip/api/s3/p2/full/15763/905b1def4a3873cfd9/1080p/index.m3u8", // 类型 A 金币视频链接，已修改参数<br/>
+</li><li>    "uid": 567931, // 从 SVIP JWT 中解码出来的 uid<br/>
+</li><li>    "line_id": "ec58802c",<br/>
+</li><li>    "session_token": "eyJ0eXAiOiJKV1Qi...", // 从类型 B M3U8 里提取的 SVIP JWT<br/>
+</li><li>}</li></ol></div></div><br/>
+<br/>
+运行脚本，结果：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> HTTP 403<br/>
+错误的 Line ID</blockquote></div><br/>
+<br/>
+WTF，我都做到这一步了，怎么还有问题？<img alt="" border="0" smilieid="1262" src="https://cdn.binmt.cc/static/image/smiley/qq/qq019.gif"/><br/>
+<br/>
+我们这里先要知道，啥是<font color="#ff0000"> Line ID</font> ？<br/>
+<font color="#ff0000">Line ID </font>就是 CDN 线路 ID。在 URL 中它表现为 ?line= 后面的 8 位十六进制字符串。<br/>
+<br/>
+经过大量观察，总共有四个已知 <font color="#ff0000">Line ID </font>：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> ec58802c<br/>
+00f9bbcb<br/>
+7aa3f71a<br/>
+cdbbf8ef</blockquote></div><br/>
+<br/>
+这些都是从 <font color="#ff0000">VIP 视频、B 类型金币视频或 preview 视频</font>里总结出来的。但 <font color="#ff0000">A 类型</font>金币视频可能使用不同的线路 ID。<br/>
+<br/>
+我们在 <strong>build_signed_url.py </strong>里逐个尝试这四个 <font color="#ff0000">Line ID</font>：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>for line_id in ["ec58802c", "00f9bbcb", "7aa3f71a", "cdbbf8ef"]:<br/>
+</li><li>    CONFIG["line_id"] = line_id<br/>
+</li><li>    # 运行 build_m3u8_url 并请求</li></ol></div></div><br/>
+<br/>
+结果：全部返回<font color="#ff0000">错误的 Line ID</font><br/>
+<br/>
+这说明：<br/>
+<font color="Red">1、A 类型金币视频有独立的线路 ID<br/>
+2、或者线路 ID 不是随机的，而是和视频 ID、内容哈希绑定的。<br/>
+3、或者服务器对这条请求有其他校验。</font><br/>
+<br/>
+同时，另一个让我们困惑的现象是：在浏览器的正常请求中，网页从来不会在 M3U8 URL 里加上 <strong>_st 参数</strong>。<font color="#ff0000">只在 TS 和 key 的 URL 里出现 _st</font>。这说明 <strong>_st 参数可能是 CDN 内部转发时使用的，而不是前端主动添加的</strong>。<br/>
+也就是说，我们之前用 <strong>build_signed_url.py</strong> 手动拼接 _st 参数请求 M3U8 的方式，可能不符合服务器的预期流程。服务器看到 M3U8 请求带了 _st，可能觉得“这不合理”，于是返回<font color="#ff0000">错误的 Line ID</font>——<font color="#0000ff">这个错误信息可能只是一个通用的拒绝借口。</font><img alt="" border="0" smilieid="1228" src="https://cdn.binmt.cc/static/image/smiley/qq/qq037.gif"/><br/>
+<br/>
+<strong><font color="Red">六、破局</font></strong><br/>
+<br/>
+难道，我们前面的努力都白费了吗？<img alt="" border="0" smilieid="1273" src="https://cdn.binmt.cc/static/image/smiley/qq/qq032.gif"/><br/>
+既然直接构造 M3U8 URL 走不通，我们决定回到浏览器控制台，看看网页到底是怎么获取金币视频播放地址的。<br/>
+我们<font color="#ff0000">在 DevTools 的 Network 面板里过滤</font>，发现了一个关键 API：<br/>
+<br/>
+<div class="comiis_quote bg_h b_dashed f_c"><blockquote><font size="2">回复</font> GET /api/videos/{video_id}/preview<br/>
+Host: xxx.cloudfront.net</blockquote></div><br/>
+<br/>
+这个接口返回视频的播放信息，包括 <font color="#ff0000">M3U8 URL、线路 ID</font>。它用于试看视频的获取。<br/>
+<br/>
+<img alt="" border="0" src="https://icdn.binmt.cc/2606/6a3662b4bba26.jpeg"/><br/>
+<br/>
+我们仍然从 VIP 视频中寻找经验，发现当请求完整视频时，<strong>后方的 preview 会被改成 playback</strong> ，而接口返回视频的播放信息，包括 <font color="#ff0000">M3U8 URL、线路 ID、JWT 等</font>。它用于完整视频的获取。<br/>
+<br/>
+<img alt="" border="0" src="https://icdn.binmt.cc/2606/6a3664d9beaac.jpeg"/><br/>
+<br/>
+我们观察这个接口的请求头，发现它需要：<br/>
+<br/>
+<font color="Red">X-Sign</font>：API 请求签名。<br/>
+<font color="Red">Authorization</font>: Bearer &lt;JWT&gt;：用户身份 JWT。<br/>
+<br/>
+<strong><font color="#0000ff">而这两样东西，我们正好都有！</font></strong><img alt="" border="0" smilieid="1264" src="https://cdn.binmt.cc/static/image/smiley/qq/qq045.gif"/><br/>
+<strong><font color="#ff0000">X-Sign 可以用我们中篇已经逆向出来的 API 签名算法生成。<br/>
+JWT 可以用我们手里通过类型 B 金币视频所泄露的 SVIP 用户 JWT</font></strong><br/>
+<br/>
+于是我们写了 <strong>repro_playback.py</strong> 脚本。核心逻辑是：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>import argparse<br/>
+</li><li>import base64<br/>
+</li><li>import hashlib<br/>
+</li><li>import secrets<br/>
+</li><li>import requests<br/>
+</li><li>import time<br/>
+</li><li>from urllib.parse import urlparse, parse_qs<br/>
+</li><li><br/>
+</li><li>SIGN_SECRET = "6b5hR#7uVhJPZT1zAgA26fPSyx9Zh!Za"<br/>
+</li><li><br/>
+</li><li>def compute_sign(method, path, query, timestamp, device_id):<br/>
+</li><li>    strip = path.replace("/api", "", 1) if path.startswith("/api") else path<br/>
+</li><li>    raw = "\n".join([SIGN_SECRET, method.upper(), strip, query or "",<br/>
+</li><li>                     str(timestamp), device_id])<br/>
+</li><li>    return hashlib.sha256(raw.encode()).hexdigest()<br/>
+</li><li><br/>
+</li><li>def main():<br/>
+</li><li>    video_id = 30053<br/>
+</li><li>    endpoint = "playback"<br/>
+</li><li>    jwt_token = DEFAULT_JWT<br/>
+</li><li>    bearer = f"Bearer {jwt_token}"<br/>
+</li><li>    base_url = f"https://xxx.cloudfront.net/api/videos/{video_id}/{endpoint}"<br/>
+</li><li><br/>
+</li><li>    device_id = secrets.token_hex(16)<br/>
+</li><li>    path = f"/api/videos/{video_id}/{endpoint}"<br/>
+</li><li>    nonce = secrets.token_hex(16)<br/>
+</li><li>    timestamp = max(1, int(time.time()) - 5)<br/>
+</li><li>    sign = compute_sign("GET", path, "", timestamp, device_id)<br/>
+</li><li><br/>
+</li><li>    headers = {<br/>
+</li><li>        "Accept": "application/x-protobuf",<br/>
+</li><li>        "Authorization": bearer,<br/>
+</li><li>        "X-Device-Id": device_id,<br/>
+</li><li>        "X-Nonce": nonce,<br/>
+</li><li>        "X-Sign": sign,<br/>
+</li><li>        "X-Timestamp": str(timestamp),<br/>
+</li><li>    }<br/>
+</li><li><br/>
+</li><li>    resp = requests.get(base_url, headers=headers, timeout=30)<br/>
+</li><li>    print(f"HTTP {resp.status_code}")<br/>
+</li><li>    # 解析 protobuf 响应...</li></ol></div></div><br/>
+<br/>
+这个脚本运行后，服务端返回了 <strong>protobuf 编码的响应</strong>。我们用脚本里自带的 <font color="#ff0000">decode_protobuf </font>函数解析，<font color="#ff0000">成功从中提取出了 M3U8 URL 和线路信息</font>，我们成功获取了完整的金币视频！<br/>
+<font color="#ff0000">而且，我们一口气就解锁了多条线路和多个画质。</font><br/>
+<br/>
+最后，我们写了一个自动化脚本，只要提供视频ID和提取 JWT 的金币视频链接，就可以解锁全站任意视频。<br/>
+脚本我已经放到文末了，需要的可以自行下载。<br/>
+<br/>
+使用方法：<br/>
+<br/>
+<div class="comiis_blockcode comiis_bodybg b_ok f_b"><div class="bg_f b_l"><ol><li>usage: video_download.py [-h] [--vid VID] [--m3u8-url M3U8_URL] [--jwt JWT] [--endpoint {playback,preview}] [--save-links FILE] [--download-video] [--stream STREAM] [--download-dir DIR]<br/>
+</li><li>                         [--concurrency CONCURRENCY]<br/>
+</li><li><br/>
+</li><li>视频自动解析脚本<br/>
+</li><li><br/>
+</li><li>options:<br/>
+</li><li>  -h, --help            show this help message and exit<br/>
+</li><li>  --vid VID             视频 ID<br/>
+</li><li>  --m3u8-url M3U8_URL   M3U8 链接（提取 JWT）<br/>
+</li><li>  --jwt JWT             直接提供 JWT<br/>
+</li><li>  --endpoint {playback,preview}<br/>
+</li><li>                        请求接口（默认 playback）<br/>
+</li><li>  --save-links FILE     保存链接到文件<br/>
+</li><li>  --download-video      非交互模式: 下载视频<br/>
+</li><li>  --stream STREAM       指定下载的流序号（配合 --download-video）<br/>
+</li><li>  --download-dir DIR    下载目录<br/>
+</li><li>  --concurrency CONCURRENCY<br/>
+</li><li>                        并发下载数（默认 8）<br/>
+</li><li><br/>
+</li><li>示例:<br/>
+</li><li>  video_download.py --vid 30053 --m3u8-url "https://preview.xxx/..."<br/>
+</li><li>  video_download.py --vid 30053 --jwt "eyJ..."<br/>
+</li><li>  video_download.py --vid 30053 --jwt "eyJ..." --download-video --stream 3<br/>
+</li><li>  video_download.py                              # 交互模式</li></ol></div></div><br/>
+<br/>
+运行效果：<br/>
+<br/>
+<img alt="" border="0" src="https://icdn.binmt.cc/2606/6a36a199a1d7c.jpeg"/><br/>
+<br/>
+<img alt="" border="0" src="https://icdn.binmt.cc/2606/6a36a1b7512a5.jpeg"/><br/>
+<br/>
+我们可以看到，已经下载下来了完整的金币视频，也和网站中所写的视频时间一致：<br/>
+<br/>
+<img alt="" border="0" src="https://icdn.binmt.cc/2606/6a36a1fab039c.jpeg"/><br/>
+<br/>
+<i>这里要注意，original 和 480p 画质不太稳定，可能请求不成功，但是 1080p 和 720p 都是可以稳定请求的。</i><br/>
+<br/>
+这告诉我们一个道理：<strong><font color="#ff0000">一条路走到黑，在逆向的世界中，有很大概率是行不通的。只有灵活变换方向，才能真正看到柳暗花明。</font></strong><img alt="" border="0" smilieid="1197" src="https://cdn.binmt.cc/static/image/smiley/qq/qq029.gif"/><br/>
+<br/>
+<strong><font color="Red">七、总结</font></strong><br/>
+<br/>
+到这里，这场历时三篇、横跨数周的黑产全链路逆向终于结尾了<img alt="" border="0" smilieid="1211" src="https://cdn.binmt.cc/static/image/smiley/qq/qq043.gif"/><br/>
+先给自己鼓个掌——能坚持看到这里的，都是真爱粉，也说明你对逆向是真有热情。废话不多说，咱们把这三篇的精华串起来，做个彻底的复盘。<br/>
+<br/>
+<strong><font color="Red">上篇，我们像拆迁队一样，先把软件的外壳扒了个干净。从 APK 反编译到 Flutter 框架识别，确定了攻击面。最重要的是，我们深度解析了 APP 识别邀请的逻辑，讲解了 Signing Block V2 的基础知识。别看基础，但没有它，后面全是空中楼阁。<br/>
+</font><br/>
+<font color="Red">中篇，我们开始玩真的。Flutter 的代理绕过、证书锁定破解、Dart 层的 Blutter 逆向……每一步都是在跟黑产团伙斗智斗勇。最后，我们逆向出了 x-sign ，顺藤摸瓜找到了共享密钥，然后写出了注册机，批量搞到了 VIP 会员。<br/>
+</font><br/>
+<font color="Red">下篇，本以为VIP到手就结束了，结果发现还有金币视频这个“终极BOSS”。URL 签名、JWT 权限、Line ID……一层接一层的“铜墙铁壁”，差点把我劝退。但老天爷赏饭吃，居然让我们撞上了 JWT 信息泄露这种“天降馅饼”，裸链请求返回的 M3U8 里，赫然躺着 SVIP 用户的 JWT 。靠着它，再结合我们之前逆出来的 API 签名算法，直接调用 playback 接口，金币视频的完整播放地址一览无余。完美收官！</font></strong><br/>
+<br/>
+回顾整个过程，你会发现，真正牛逼的不是代码写得有多溜，而是思路。我送给大家几条：<br/>
+<br/>
+<font color="Red">1、别跟防御硬刚，要找它的“软肋”</font><br/>
+金币视频的JWT校验那么强，但你非要自己去算或伪造吗？不，我们找到了JWT泄露这条捷径。有时候，绕过问题比解决问题更高效。<br/>
+<br/>
+<font color="Red">2、“降维打击”永远有效</font><br/>
+Web端比App端好分析？那就去Web端逆向。VIP视频裸链能访问？那就拿这个思路去测金币视频。永远站在更高的维度看问题。<br/>
+<br/>
+<font color="Red">3、信息就是一切</font><br/>
+整个系列下来，我们干的最多的事就是“收集信息”。从APP到社会工程学拿到网址、从URL结构到JS代码，从M3U8内容到JWT载荷，每一个碎片拼起来，就是一张完整的攻击地图。逆向的本质，就是把散落的信息重新组织成真相。<br/>
+<br/>
+<font color="Red">4、心态要稳，脸皮要厚</font><br/>
+遇到“签名错误”“令牌无效”“错误的Line ID”的时候，我内心也是崩溃的。但没办法，搞逆向就是这样——99次失败换1次成功。关键是每次失败后，问自己一句：“还有什么我没试过的？”<br/>
+<br/>
+经过这个系列的学习，也给我们开发者敲响了警钟。如果你是一名开发者，请记住：<font color="#ff0000"><strong>安全不是加几道锁就完事了，而是要系统性地设计，确保每一环都经得起推敲。</strong></font><br/>
+感谢各位的陪伴，咱们下个系列再见！<br/>
+<br/>
+码字不易，点赞可有？<img alt="" border="0" smilieid="1239" src="https://cdn.binmt.cc/static/image/smiley/qq/qq036.gif"/><br/>
+帖子内所有工具都已放在下面，可供大家练手，评论自取。<br/>
+<a href="https://jiguro.lanzouw.com/iGuX63sfsggh" target="_blank">https://jiguro.lanzouw.com/iGuX63sfsggh</a></div>
+<div class="comiis_p10 bg_e f14 mt10 mb5 cl" style="line-height:24px;">
+<div class="comiis_noatt_ico bg_0 f_f"><i class="comiis_font"></i></div>
+<h3 class="f_c">本帖子中包含更多精彩资源</h3>
+<p>
+<span class="f_c">您需要</span> <a class="f_wb" href="https://bbs.binmt.cc/member.php?mod=logging&amp;action=login&amp;mobile=2">登录</a> <span class="f_c">才可以查看, 没帐号?</span> <a class="f_wb" href="https://bbs.binmt.cc/member.php?mod=register213&amp;mobile=2">立即注册</a>
+</p>
+</div>

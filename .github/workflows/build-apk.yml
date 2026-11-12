@@ -1,0 +1,244 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# A newer commit on the same ref makes the previous build obsolete.
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Restore Gradle cache
+        id: gradle-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.8'
+          channel: stable
+          cache: true
+
+      - name: Increment semantic app version
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import re
+          import subprocess
+          from pathlib import Path
+
+          path = Path("pubspec.yaml")
+          content = path.read_text()
+          match = re.search(r"(?m)^version:\s*(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?\s*$", content)
+          if not match:
+              raise SystemExit("pubspec.yaml version must use MAJOR.MINOR.PATCH+BUILD format")
+
+          major, minor, patch = map(int, match.group(1, 2, 3))
+          # Increment PATCH; carry 1.0.9 -> 1.1.0, and 1.9.9 -> 2.0.0.
+          patch += 1
+          if patch >= 10:
+              patch = 0
+              minor += 1
+          if minor >= 10:
+              minor = 0
+              major += 1
+
+          version_name = f"{major}.{minor}.{patch}"
+          # Keep Android versionCode within signed 32-bit range. The previous
+          # formula repeatedly added the old build number and overflowed Flutter's parser.
+          previous_code = int(match.group(4) or 0)
+          version_code = previous_code + 1
+          if version_code > 2147483647:
+              raise SystemExit("Android versionCode exceeded the maximum supported integer")
+          new_version = f"{version_name}+{version_code}"
+          content, count = re.subn(r"(?m)^version:.*$", f"version: {new_version}", content, count=1)
+          if count != 1:
+              raise SystemExit("Could not update pubspec.yaml version")
+          path.write_text(content)
+
+          # Persist the increment so the next build continues from this version.
+          subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
+          subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
+          subprocess.run(["git", "add", "pubspec.yaml"], check=True)
+          subprocess.run(["git", "commit", "-m", f"chore: bump app version to {new_version} [skip ci]"], check=True)
+          subprocess.run(["git", "push", "origin", "HEAD:main"], check=True)
+          print(f"Building app version {new_version}")
+          PY
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # tag 推送时版本就是 pubspec 里的值；main 上的构建则已经被上一步 +1 过，
+      # 两种情况的 tag 名都从这里统一取，下面发布时不再各算各的。
+      - name: Read app version
+        id: app_version
+        run: |
+          set -e
+          VERSION=$(sed -n 's/^version: *\([0-9][0-9.]*\)+.*$/\1/p' pubspec.yaml)
+          if [ -z "$VERSION" ]; then
+            echo "pubspec.yaml 里没读到 version" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "构建版本 $VERSION"
+
+      # 固定发布签名：早期版本每次都用 CI 临时生成的 debug 证书，指纹每次都变，
+      # 新装包无法覆盖旧版本（INSTALL_FAILED_UPDATE_INCOMPATIBLE）。
+      # 密钥存在仓库 Secret 里，构建时还原；缺失则回退 debug 签名并告警。
+      # fork 出来的仓库不会继承原仓库的 Secret，这里先看有没有。
+      - name: Detect signing secret
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "has_secret=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_secret=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::没有配置 ANDROID_KEYSTORE_BASE64（fork 仓库不会继承 Secret），改用本仓库缓存的备用签名；首次构建会生成一张并缓存，之后版本可互相覆盖。"
+          fi
+
+      # 备用签名：同一仓库的自建构建共用一个 keystore，避免每次全新生成导致无法覆盖安装。
+      - name: Restore fallback signing key
+        id: fallback_key
+        if: steps.signing.outputs.has_secret == 'false'
+        uses: actions/cache/restore@v4
+        with:
+          path: fallback-release.jks
+          key: mtforum-fallback-keystore-v1
+
+      - name: Configure release signing
+        env:
+          HAS_SECRET: ${{ steps.signing.outputs.has_secret }}
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          FALLBACK_STORE_PASSWORD: mtforum-fallback
+          FALLBACK_KEY_ALIAS: mtforum-fallback
+        run: |
+          set -e
+          if [ "$HAS_SECRET" = "true" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.jks"
+            printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+              "$GITHUB_WORKSPACE/release.jks" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" \
+              > android/key.properties
+            keytool -list -v -keystore "$GITHUB_WORKSPACE/release.jks" \
+              -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" | grep "SHA256:"
+            exit 0
+          fi
+          KS="$GITHUB_WORKSPACE/fallback-release.jks"
+          if [ ! -f "$KS" ]; then
+            keytool -genkeypair -keystore "$KS" -alias "$FALLBACK_KEY_ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$FALLBACK_STORE_PASSWORD" -keypass "$FALLBACK_STORE_PASSWORD" \
+              -dname "CN=MT Forum Self Build, O=Local, C=CN"
+            echo "已生成备用签名（将写入 Actions 缓存）"
+          else
+            echo "复用缓存里的备用签名"
+          fi
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$KS" "$FALLBACK_STORE_PASSWORD" "$FALLBACK_KEY_ALIAS" "$FALLBACK_STORE_PASSWORD" \
+            > android/key.properties
+          keytool -list -v -keystore "$KS" \
+            -storepass "$FALLBACK_STORE_PASSWORD" -alias "$FALLBACK_KEY_ALIAS" | grep "SHA256:"
+
+      - name: Save fallback signing key
+        if: always() && steps.signing.outputs.has_secret == 'false' && steps.fallback_key.outputs.cache-hit != 'true' && hashFiles('fallback-release.jks') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: fallback-release.jks
+          key: mtforum-fallback-keystore-v1
+
+      - name: Generate launcher icons
+        run: |
+          python3 -m pip install --user Pillow
+          python3 tool/generate_launcher_icon.py
+
+      - name: Analyze
+        # 只做提醒，不卡构建：lint 规则随 Flutter 版本增删，info 级提示没有理由
+        # 让一个能装的包构建不出来；真正的编译错误会在下一步的 build 里暴露。
+        continue-on-error: true
+        run: flutter analyze
+
+      - name: Build universal APK
+        run: flutter build apk --release --no-pub --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }}
+
+      - name: Build split APKs
+        run: flutter build apk --release --split-per-abi --no-pub --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }}
+
+      # 把实际签进包里的证书打出来，方便对不上时直接比对指纹。
+      # --split-per-abi 之后 app-release.apk 可能已被清理，这里挑任意一个产物即可。
+      - name: Show APK signing certificate
+        continue-on-error: true
+        run: |
+          set +e
+          APK=$(ls build/app/outputs/flutter-apk/*.apk 2>/dev/null | head -1)
+          BT=$(ls -d "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/* 2>/dev/null | sort -V | tail -1)
+          echo "检查 $APK"
+          if [ -n "$BT" ] && [ -x "$BT/apksigner" ] && [ -n "$APK" ]; then
+            "$BT/apksigner" verify --print-certs "$APK" | grep -E "Signer #1 certificate (DN|SHA-256)"
+          else
+            echo "apksigner 不可用，跳过证书打印"
+          fi
+          exit 0
+
+      # Save even when a build step fails, so the next run does not have to
+      # download the Gradle distribution and all dependencies again.
+      - name: Save Gradle cache
+        if: always() && steps.gradle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtforum-apks
+          path: build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+
+      # 每次构建都发 Release，不再只认 v* 标签：Artifacts 要登录才能下、90 天
+      # 就过期，手机上想直接装包只有 Releases 这条公开链接。
+      # tag 名按版本号取，同一版本重复构建只会更新同一个 Release 的附件，
+      # 不会堆出一串同名版本。
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.app_version.outputs.version) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.app_version.outputs.version) }}
+          generate_release_notes: true
+          make_latest: true
+          files: build/app/outputs/flutter-apk/*.apk
