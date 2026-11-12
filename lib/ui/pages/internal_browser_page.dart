@@ -141,14 +141,15 @@ class _InternalBrowserPageState extends State<InternalBrowserPage> {
     // 减一层历史后如果还停在同一地址，就直接关掉这一页，把人放回帖子。
     final before = await _currentUrl(controller);
     await controller.goBack();
-    var after = before;
-    for (var i = 0; i < 4; i++) {
+    // 等这一跳真正停下来再判断：跳转链的中间地址也和原地址不同，边跳边比会
+    // 误判成「退成功了」，然后服务端又把人 302 回原页。
+    for (var i = 0; i < 10 && _loading; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 250));
       if (!mounted) return;
-      after = await _currentUrl(controller);
-      if (after != before) break;
     }
+    await Future<void>.delayed(const Duration(milliseconds: 150));
     if (!mounted) return;
+    final after = await _currentUrl(controller);
     if (after.isEmpty || after == before) {
       Navigator.pop(context);
       return;
