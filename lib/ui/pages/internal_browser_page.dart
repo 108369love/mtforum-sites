@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:in_app_webview_flutter/flutter_inappwebview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -11,11 +12,13 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/app_config.dart';
 import '../../core/http_session.dart';
 import '../../core/sites.dart';
+import '../../core/userscripts.dart';
 import '../../services/download_manager.dart';
 import '../navigation/app_routes.dart';
 import '../widgets/glass_dialog.dart';
 import '../widgets/glass_menu.dart';
 import 'site_picker_page.dart';
+import 'userscripts_page.dart';
 import 'download_manager_page.dart';
 
 /// 地址栏右上角切换的搜索引擎。
@@ -156,6 +159,8 @@ class _InternalBrowserPageState extends State<InternalBrowserPage> {
   bool get _isMtHost => Uri.tryParse(_effectiveUrl)?.host == AppConfig.host;
 
   bool get _isBookmarked => _bookmarks.any((entry) => entry.url == _url);
+
+  int get _scriptCount => UserScriptStore.instance.scripts.where((script) => script.enabled).length;
 
   @override
   void initState() {
@@ -531,6 +536,75 @@ $dark''';
       ..showSnackBar(SnackBar(content: Text(next ? '广告拦截已开启' : '广告拦截已关闭')));
   }
 
+  /// 把当前地址命中的用户脚本注入页面。
+  ///
+  /// 单个脚本抛错只影响它自己：`evaluateJavascript` 的失败在这里吞掉，继续跑
+  /// 下一个脚本，页面本身也不会被牵连。
+  Future<void> _injectUserScripts(InAppWebViewController controller) async {
+    final scripts = UserScriptStore.instance.matching(_effectiveUrl);
+    if (scripts.isEmpty) return;
+    try {
+      await controller.evaluateJavascript(source: UserScriptStore.prelude);
+    } catch (_) {
+      return;
+    }
+    for (final script in scripts) {
+      try {
+        await controller.evaluateJavascript(source: script.code);
+      } catch (_) {
+        // 这个脚本自己炸了，跳过。
+      }
+    }
+  }
+
+  /// `GM_xmlhttpRequest` 的实现：原生发请求，把结果原样交回页面。
+  Future<Map<String, Object?>> _gmXhr(Map<dynamic, dynamic> payload) async {
+    final url = payload['url'] is String ? payload['url'] as String : '';
+    if (url.isEmpty) return <String, Object?>{'error': 'empty url'};
+    final method = (payload['method'] is String ? payload['method'] as String : 'GET').toUpperCase();
+    final headers = <String, String>{};
+    final rawHeaders = payload['headers'];
+    if (rawHeaders is Map) {
+      rawHeaders.forEach((key, value) {
+        if (key != null && value != null) headers['$key'] = '$value';
+      });
+    }
+    final client = http.Client();
+    try {
+      final request = http.Request(method, Uri.parse(url));
+      request.headers.addAll(headers);
+      final data = payload['data'];
+      if (data is String && data.isNotEmpty && method != 'GET' && method != 'HEAD') {
+        request.body = data;
+      }
+      final streamed = await client.send(request).timeout(const Duration(seconds: 25));
+      final response = await http.Response.fromStream(streamed);
+      return <String, Object?>{
+        'status': response.statusCode,
+        'statusText': response.reasonPhrase ?? '',
+        'responseText': _decodeResponseBody(response),
+        'finalUrl': url,
+        'responseHeaders': response.headers.entries.map((e) => '${e.key}: ${e.value}').join('\r\n'),
+      };
+    } catch (e) {
+      return <String, Object?>{'error': '$e'};
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 响应体按 UTF-8 解，解不动再退回 latin1。
+  ///
+  /// 翻译接口都是 UTF-8，但有些服务端不写 charset，`http` 包这时会按 latin1
+  /// 解，中文全变乱码——所以这里自己按字节解。
+  String _decodeResponseBody(http.Response response) {
+    try {
+      return utf8.decode(response.bodyBytes, allowMalformed: true);
+    } catch (_) {
+      return latin1.decode(response.bodyBytes, allowInvalid: true);
+    }
+  }
+
   Future<void> _toggleDesktop() async {
     setState(() {
       _desktop = !_desktop;
@@ -750,6 +824,11 @@ $dark''';
       ),
       const GlassMenuItem(value: 'copy', label: '复制链接', icon: Icons.link_rounded),
       const GlassMenuItem(value: 'external', label: '外部浏览器打开', icon: Icons.open_in_browser_rounded),
+      GlassMenuItem(
+        value: 'userscripts',
+        label: _scriptCount > 0 ? '用户脚本 · 已开 $_scriptCount' : '用户脚本',
+        icon: Icons.extension_outlined,
+      ),
       const GlassMenuItem(value: 'downloads', label: '下载管理', icon: Icons.download_for_offline_outlined),
       const GlassMenuItem(value: 'clear', label: '清除浏览数据', icon: Icons.delete_outline_rounded, danger: true),
       if (widget.site != null)
@@ -808,6 +887,12 @@ $dark''';
     }
     if (value == 'external') {
       await _openExternal();
+      return;
+    }
+    if (value == 'userscripts') {
+      if (!mounted) return;
+      await Navigator.of(context).push(appRoute(builder: (_) => const UserScriptsPage()));
+      if (mounted) setState(() {});
       return;
     }
     if (value == 'downloads') {
@@ -965,6 +1050,15 @@ $dark''';
       ),
       onWebViewCreated: (controller) {
         _controller = controller;
+        // 脚本的跨域请求由这里转发到原生 HTTP，绕开浏览器 CORS。
+        controller.addJavaScriptHandler(
+          handlerName: 'gmXhr',
+          callback: (args) async {
+            final raw = args.isNotEmpty ? args.first : null;
+            final payload = raw is Map ? raw : const <dynamic, dynamic>{};
+            return _gmXhr(payload);
+          },
+        );
       },
       onProgressChanged: (controller, progress) {
         if (!mounted) return;
@@ -994,6 +1088,7 @@ $dark''';
         });
         if (!_addressFocus.hasFocus) _address.text = current;
         await _injectEnhancements(controller);
+        await _injectUserScripts(controller);
         await _refreshNavState();
         if (!_incognito) await _recordVisit(current, _pageTitle);
       },

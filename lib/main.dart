@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/app_config.dart';
 import 'core/app_theme.dart';
 import 'core/sites.dart';
+import 'core/userscripts.dart';
 import 'mcp/mcp_server.dart';
 import 'state/app_state.dart';
 import 'ui/app_shell.dart';
@@ -19,6 +20,8 @@ Future<void> main() async {
   }
   // 上次选的站点要在首帧之前定下来：站点决定主框架长什么样，先渲染再纠正会闪一下。
   await SiteStore.instance.load();
+  // 用户脚本的体积只有几十 KB，启动时读进来，注入时不用等 IO。
+  await UserScriptStore.instance.load();
   // 上次开着 MCP 服务的话，开机自动恢复监听；关着就只读一下配置。
   unawaited(McpServer.instance.load());
   runApp(const MtForumApp());
