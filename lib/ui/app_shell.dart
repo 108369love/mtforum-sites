@@ -13,7 +13,7 @@ import 'pages/compose_page.dart';
 import 'pages/home_page.dart';
 import 'pages/profile_page.dart';
 import 'pages/search_page.dart';
-import 'pages/site_web_page.dart';
+import 'pages/internal_browser_page.dart';
 import 'widgets/glass_compose_button.dart';
 import 'widgets/measure_height.dart';
 import 'navigation/app_routes.dart';
@@ -78,7 +78,13 @@ class _AppShellState extends State<AppShell> {
     // 站点自带前端（XenForo 这类）：主框架只剩这一个页面，版块/搜索/我的都是
     // Discuz 专用入口，在这里没有意义；切换站点放在它的顶栏菜单里。
     if (site.mode == SiteMode.web) {
-      return SiteWebPage(key: ValueKey('web-site-${site.id}-${site.base}'));
+      // 站点自带前端：整棵树换成内置浏览器，地址栏/主页/历史/拦截那套都在里面。
+      return InternalBrowserPage(
+        key: ValueKey('web-site-${site.id}-${site.base}'),
+        url: site.homeUrl,
+        title: site.name,
+        site: site,
+      );
     }
     return PopScope(
       canPop: Navigator.of(context).canPop(),

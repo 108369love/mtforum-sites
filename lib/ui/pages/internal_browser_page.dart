@@ -10,10 +10,12 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/app_config.dart';
 import '../../core/http_session.dart';
+import '../../core/sites.dart';
 import '../../services/download_manager.dart';
 import '../navigation/app_routes.dart';
 import '../widgets/glass_dialog.dart';
 import '../widgets/glass_menu.dart';
+import 'site_picker_page.dart';
 import 'download_manager_page.dart';
 
 /// 地址栏右上角切换的搜索引擎。
@@ -60,10 +62,14 @@ class WebEntry {
 /// 平台视图，多标签同时存活的内存代价比原生高得多；站内「点开链接看一眼」
 /// 的场景，单窗口 + 后退到底再关页已经够用。
 class InternalBrowserPage extends StatefulWidget {
-  const InternalBrowserPage({super.key, required this.url, this.title = '内部浏览器'});
+  const InternalBrowserPage({super.key, required this.url, this.title = '内部浏览器', this.site});
 
   final String url;
   final String title;
+
+  /// 非空表示这一页是「站点模式」的根页面（XDA / 妖火 / 自定义站点）：
+  /// 底部挂站点快捷入口，菜单里给「切换站点」，返回到底直接退应用而不是弹路由。
+  final SiteProfile? site;
 
   @override
   State<InternalBrowserPage> createState() => _InternalBrowserPageState();
@@ -352,14 +358,23 @@ class _InternalBrowserPageState extends State<InternalBrowserPage> {
     await _go(entry.url);
   }
 
+  /// 退到没有网页历史时的出口：普通页面弹路由，站点模式（根页面）退应用。
+  void _leavePage() {
+    if (widget.site != null) {
+      unawaited(SystemNavigator.pop());
+    } else if (mounted) {
+      Navigator.pop(context);
+    }
+  }
+
   Future<void> _back() async {
     final controller = _controller;
     if (controller == null) {
-      if (mounted) Navigator.pop(context);
+      _leavePage();
       return;
     }
     if (!await controller.canGoBack()) {
-      if (mounted) Navigator.pop(context);
+      _leavePage();
       return;
     }
     // 有些跳转链（百度网盘短链、带口令的分享页）会在历史里留下同一页的多次
@@ -376,7 +391,7 @@ class _InternalBrowserPageState extends State<InternalBrowserPage> {
     if (!mounted) return;
     final after = await _currentUrl(controller);
     if (after.isEmpty || after == before) {
-      Navigator.pop(context);
+      _leavePage();
       return;
     }
     await _refreshNavState();
@@ -460,6 +475,10 @@ $dark''';
     } catch (_) {
       // 忽略：没套上增强也只是页面朴素一点。
     }
+  }
+
+  Future<void> _switchSite() async {
+    await Navigator.of(context).push(appRoute(builder: (_) => const SitePickerPage()));
   }
 
   Future<void> _pickEngine() async {
@@ -733,7 +752,10 @@ $dark''';
       const GlassMenuItem(value: 'external', label: '外部浏览器打开', icon: Icons.open_in_browser_rounded),
       const GlassMenuItem(value: 'downloads', label: '下载管理', icon: Icons.download_for_offline_outlined),
       const GlassMenuItem(value: 'clear', label: '清除浏览数据', icon: Icons.delete_outline_rounded, danger: true),
-      const GlassMenuItem(value: 'close', label: '关闭浏览器', icon: Icons.close_rounded),
+      if (widget.site != null)
+        const GlassMenuItem(value: 'switchSite', label: '切换站点', icon: Icons.swap_horiz_rounded)
+      else
+        const GlassMenuItem(value: 'close', label: '关闭浏览器', icon: Icons.close_rounded),
     ];
     final box = context.findRenderObject() as RenderBox?;
     final anchor = box == null
@@ -797,6 +819,10 @@ $dark''';
       await _clearData();
       return;
     }
+    if (value == 'switchSite') {
+      await _switchSite();
+      return;
+    }
     if (value == 'close' && mounted) {
       Navigator.pop(context);
     }
@@ -813,12 +839,15 @@ $dark''';
       },
       child: Scaffold(
         appBar: AppBar(
-          leading: IconButton(
-            tooltip: '返回',
-            onPressed: _hierarchyBack,
-            icon: const Icon(Icons.arrow_back_rounded),
-          ),
-          titleSpacing: 0,
+          automaticallyImplyLeading: false,
+          leading: widget.site == null
+              ? IconButton(
+                  tooltip: '返回',
+                  onPressed: _hierarchyBack,
+                  icon: const Icon(Icons.arrow_back_rounded),
+                )
+              : null,
+          titleSpacing: 12,
           title: _addressBar(context, scheme),
           actions: [
             if (_incognito)
@@ -864,6 +893,7 @@ $dark''';
               ),
             ),
             if (_findOpen) _findBar(context, scheme),
+            _siteQuickBar(context, scheme),
           ],
         ),
       ),
@@ -1058,6 +1088,43 @@ $dark''';
                 onPressed: () => unawaited(_toggleFind()),
                 icon: const Icon(Icons.close_rounded),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 站点模式底部快捷入口（首页/论坛/登录…），和站点表里配的一致。
+  Widget _siteQuickBar(BuildContext context, ColorScheme scheme) {
+    final site = widget.site;
+    final links = site?.quickLinks ?? const <SiteQuickLink>[];
+    if (site == null || links.isEmpty) return const SizedBox.shrink();
+    return Material(
+      color: scheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Container(
+          height: 56,
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5))),
+          ),
+          child: Row(
+            children: [
+              for (final link in links)
+                Expanded(
+                  child: InkWell(
+                    onTap: () => unawaited(_go(site.uri(link.path).toString())),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(link.icon, size: 20, color: scheme.onSurfaceVariant),
+                        const SizedBox(height: 2),
+                        Text(link.label, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
