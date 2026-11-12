@@ -229,6 +229,37 @@ class YaohuoRepository {
     return parseLinkList(html);
   }
 
+  /// 抓一个没有固定结构的详情页（站内信之类）：取最长的一块正文 + 图片。
+  Future<({String title, String body, List<String> images})> fetchGenericPage(String url) async {
+    final html = await _fetch(url);
+    final doc = html_parser.parse(html);
+    final title = (doc.querySelector('div.title')?.text.trim().isNotEmpty ?? false)
+        ? doc.querySelector('div.title')!.text.trim()
+        : (doc.querySelector('title')?.text.trim() ?? '');
+    dom.Element? best;
+    var bestLength = 0;
+    for (final candidate in doc.querySelectorAll('div.content')) {
+      final length = candidate.text.trim().length;
+      if (length > bestLength) {
+        bestLength = length;
+        best = candidate;
+      }
+    }
+    if (best == null || bestLength < 40) {
+      final body = doc.body;
+      if (body != null && body.text.trim().length > bestLength) best = body;
+    }
+    final htmlBody = best?.innerHtml ?? '';
+    final fragment = html_parser.parseFragment(htmlBody.replaceAll(RegExp(r'<script.*?</script>', caseSensitive: false, dotAll: true), ''));
+    final images = <String>[];
+    for (final img in fragment.querySelectorAll('img')) {
+      final src = img.attributes['src'] ?? '';
+      if (src.isEmpty || images.contains(src)) continue;
+      images.add(_absolute(src));
+    }
+    return (title: title, body: _compact(fragment.text ?? ''), images: images);
+  }
+
   /// 抓用户资料页，解析成「字段 → 值」。
   Future<Map<String, String>> fetchUserInfo(String url) async {
     final html = await _fetch(url);
@@ -287,6 +318,28 @@ class YaohuoRepository {
       var value = (match.group(2) ?? '').trim();
       value = value.replaceAll(RegExp(r'\s{2,}'), ' ');
       if (key.isEmpty || value.isEmpty) continue;
+      info[key] = value;
+    }
+    if (info.isNotEmpty) return info;
+    // 兜底一：普通「键：值」行（键不超过 8 个字、不带空格）。
+    for (final line in const LineSplitter().convert(text)) {
+      final row = line.trim();
+      if (row.isEmpty || row.length > 80) continue;
+      final match = RegExp(r'^([^\s:：]{1,8})\s*[:：]\s*(\S.*)$').firstMatch(row);
+      if (match == null) continue;
+      final key = match.group(1)?.trim() ?? '';
+      final value = match.group(2)?.trim() ?? '';
+      if (key.isEmpty || value.isEmpty) continue;
+      info[key] = value;
+    }
+    if (info.isNotEmpty) return info;
+    // 兜底二：表格两列。
+    for (final row in doc.querySelectorAll('tr')) {
+      final cells = row.querySelectorAll('td, th');
+      if (cells.length < 2) continue;
+      final key = cells[0].text.trim();
+      final value = cells[1].text.trim();
+      if (key.isEmpty || value.isEmpty || key.length > 12) continue;
       info[key] = value;
     }
     return info;
@@ -381,6 +434,24 @@ class YaohuoRepository {
         time: time,
       ));
     }
+    if (items.isNotEmpty) return items;
+    // 兜底：站点改版后 line1/line2 对不上时，直接扫帖子链接（/bbs-123456.html）。
+    final seen = <String>{};
+    for (final anchor in doc.querySelectorAll('a[href]')) {
+      final href = anchor.attributes['href'] ?? '';
+      if (!RegExp(r'bbs-\d+\.html').hasMatch(href)) continue;
+      final title = anchor.text.trim();
+      if (title.isEmpty || !seen.add(href)) continue;
+      items.add(YaohuoThreadItem(
+        title: title,
+        url: _absolute(href),
+        author: '',
+        reply: '',
+        read: '',
+        time: '',
+      ));
+      if (items.length >= 60) break;
+    }
     return items;
   }
 
@@ -458,8 +529,16 @@ class YaohuoRepository {
   }
 
   static List<YaohuoReply> _parseReplies(dom.Document doc) {
+    var rows = doc.querySelectorAll('div.recontent div.reline');
+    if (rows.isEmpty) {
+      // 站点改版兜底：楼层行都是「[沙发] / [板凳] / [12楼] 开头，带用户名链接和冒号」。
+      rows = doc
+          .querySelectorAll('div')
+          .where((element) => _looksLikeReply(element))
+          .toList();
+    }
     final replies = <YaohuoReply>[];
-    for (final element in doc.querySelectorAll('div.recontent div.reline')) {
+    for (final element in rows) {
       final text = element.text.trim();
       if (text.isEmpty) continue;
       final floor = _firstMatch(text, RegExp(r'^\[([^\]]+)\]')) ?? '';
@@ -477,6 +556,23 @@ class YaohuoRepository {
       replies.add(YaohuoReply(floor: floor, author: author, content: _compact(content), time: when));
     }
     return replies;
+  }
+
+  static bool _looksLikeReply(dom.Element element) {
+    final text = element.text.trim();
+    if (text.length < 6 || text.length > 4000) return false;
+    final head = RegExp(r'^\[([^\]]{1,6})\]').firstMatch(text);
+    if (head == null) return false;
+    final label = head.group(1) ?? '';
+    final isFloor = label == '沙发' ||
+        label == '椅子' ||
+        label == '板凳' ||
+        label == '地板' ||
+        label == '地下室' ||
+        RegExp(r'^\d{1,4}楼$').hasMatch(label);
+    if (!isFloor) return false;
+    if (!text.contains('：')) return false;
+    return element.querySelector('a') != null;
   }
 
   static String _parseBoard(dom.Document doc) {

@@ -201,7 +201,100 @@ class _YaohuoUserPageState extends State<YaohuoUserPage> {
   }
 }
 
-/// 「信箱」入口：没有固定结构的列表页，按通用链接列表解析，点开走浏览器。
+/// 一个没有固定结构的详情页：标题 + 最长正文 + 图片。
+class YaohuoGenericPage extends StatefulWidget {
+  const YaohuoGenericPage({super.key, required this.url, required this.title});
+
+  final String url;
+  final String title;
+
+  @override
+  State<YaohuoGenericPage> createState() => _YaohuoGenericPageState();
+}
+
+class _YaohuoGenericPageState extends State<YaohuoGenericPage> {
+  String _body = '';
+  String _title = '';
+  List<String> _images = <String>[];
+  bool _loading = true;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _failed = false;
+    });
+    try {
+      final page = await YaohuoRepository.instance.fetchGenericPage(widget.url);
+      if (!mounted) return;
+      setState(() {
+        _title = page.title;
+        _body = page.body;
+        _images = page.images;
+        _loading = false;
+        _failed = page.body.isEmpty && page.images.isEmpty;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _failed = true;
+      });
+    }
+  }
+
+  void _openBrowser() {
+    Navigator.of(context).push(
+      appRoute(builder: (_) => InternalBrowserPage(url: widget.url, title: widget.title)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_title.isNotEmpty ? _title : widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        actions: [
+          IconButton(tooltip: '刷新', onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
+          IconButton(tooltip: '用浏览器打开', onPressed: _openBrowser, icon: const Icon(Icons.open_in_browser_rounded)),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
+              children: [
+                if (_failed) ...[
+                  Icon(Icons.inbox_outlined, size: 44, color: scheme.outline),
+                  const SizedBox(height: 10),
+                  Center(child: Text('这个页面没能解析出内容', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
+                  const SizedBox(height: 14),
+                  FilledButton(onPressed: _openBrowser, child: const Text('用浏览器打开')),
+                ] else ...[
+                  SelectableText(_body, style: const TextStyle(fontSize: 14, height: 1.7)),
+                  for (final image in _images)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.network(image, fit: BoxFit.fitWidth, errorBuilder: (context, error, stack) => const SizedBox.shrink()),
+                      ),
+                    ),
+                ],
+              ],
+            ),
+    );
+  }
+}
+
+/// 「信箱」入口：没有固定结构的列表页，按通用链接列表解析，点开走原生详情。
 class YaohuoLinkListPage extends StatefulWidget {
   const YaohuoLinkListPage({super.key, required this.url, required this.title});
 
@@ -246,7 +339,7 @@ class _YaohuoLinkListPageState extends State<YaohuoLinkListPage> {
   }
 
   void _open(String url, String title) {
-    Navigator.of(context).push(appRoute(builder: (_) => InternalBrowserPage(url: url, title: title)));
+    Navigator.of(context).push(appRoute(builder: (_) => YaohuoGenericPage(url: url, title: title)));
   }
 
   @override
