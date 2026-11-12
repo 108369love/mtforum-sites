@@ -212,7 +212,7 @@ class YaohuoRepository {
         .replaceAll('<!--listE-->', '')
         .replaceAll(RegExp(r'<span id="KL_show_next_list"></span>'), '');
     final fragment = html_parser.parseFragment(cleaned);
-    final bodyText = _compact(fragment.text);
+    final bodyText = _compact(fragment.text ?? '');
     final images = <String>[];
     for (final img in fragment.querySelectorAll('img')) {
       final src = img.attributes['src'] ?? '';
