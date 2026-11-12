@@ -11,6 +11,9 @@ enum SiteMode {
   /// Discuz 移动端页面解析：信息流、版块、帖子、消息都是原生界面。
   native,
 
+  /// 妖火网原生解析：登录走 WebView 换 Cookie，列表/帖子用原生界面读。
+  nativeYaohuo,
+
   /// 站点自带完整前端：装进内置浏览器，登录与发帖都用站点自己的流程。
   web,
 }
@@ -57,7 +60,7 @@ class SiteProfile {
   final String homePath;
   final List<SiteQuickLink> quickLinks;
 
-  bool get isNative => mode == SiteMode.native;
+  bool get isNative => mode != SiteMode.web;
 
   /// 站内相对路径拼绝对地址；已经是绝对地址的原样返回。
   Uri uri(String path, [Map<String, String>? query]) {
@@ -103,10 +106,10 @@ class SiteProfile {
     id: 'yaohuo',
     name: '妖火网',
     base: 'https://yaohuo.me/',
-    mode: SiteMode.web,
-    tagline: '内置浏览器 · yaohuo.me',
-    notes: '妖火论坛（ASP.NET）所有内容都要登录，登录还带 Cloudflare Turnstile 人机验证，'
-        '纯 Dart 登录过不去，所以整站交给内置浏览器：验证码在那个真实浏览器里由站点自己完成。',
+    mode: SiteMode.nativeYaohuo,
+    tagline: '原生解析 · yaohuo.me',
+    notes: '妖火论坛（ASP.NET）：登录页强制人机验证，纯 Dart 过不去，所以第一次登录用'
+        '内置浏览器完成、把 Cookie 交给原生请求；之后列表和帖子都走原生界面。',
     quickLinks: <SiteQuickLink>[
       SiteQuickLink('首页', '', Icons.home_outlined),
       SiteQuickLink('论坛', 'wapindex.aspx?classid=206', Icons.forum_outlined),
