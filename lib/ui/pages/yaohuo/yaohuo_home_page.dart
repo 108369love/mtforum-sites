@@ -59,7 +59,7 @@ class YaohuoHomePage extends StatelessWidget {
                       'https://yaohuo.me/bbs/book_view_add.aspx?classid=177',
                       '发帖',
                     ),
-                    icon: const Icon(Icons.create_outlined),
+                    icon: const Icon(Icons.add_box_outlined),
                   ),
                   IconButton(
                     tooltip: '消息',
@@ -76,16 +76,12 @@ class YaohuoHomePage extends StatelessWidget {
             Row(
               children: [
                 Padding(
-                  padding: const EdgeInsets.only(left: 6, right: 2),
-                  child: TextButton(
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      minimumSize: const Size(0, 34),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
+                  padding: const EdgeInsets.only(left: 2, right: 0),
+                  child: IconButton(
+                    tooltip: '我的地盘',
+                    visualDensity: VisualDensity.compact,
                     onPressed: () => _openBrowser(context, 'https://yaohuo.me/myfile.aspx', '我的地盘'),
-                    child: const Text('地盘', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    icon: const Icon(Icons.vertical_split_outlined, size: 20),
                   ),
                 ),
                 Expanded(
