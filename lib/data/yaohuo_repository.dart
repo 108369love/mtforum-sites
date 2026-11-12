@@ -283,6 +283,99 @@ class YaohuoRepository {
     ];
   }
 
+  /// 发帖表单：站点把隐藏字段（__CSRFToken/action/classid/siteid）都放在表单里，
+  /// 先抓原表单再把标题正文填进去，比手写字段稳。
+  Future<({String action, Map<String, String> fields})> fetchComposeForm(int classId) async {
+    final html = await _fetch('bbs/book_view_add.aspx', query: <String, String>{'classid': '$classId'});
+    final doc = html_parser.parse(html);
+    dom.Element? form;
+    for (final candidate in doc.querySelectorAll('form')) {
+      if (candidate.querySelector('input[name="book_title"]') != null) {
+        form = candidate;
+        break;
+      }
+    }
+    if (form == null) throw StateError('没找到发帖表单');
+    final fields = <String, String>{};
+    for (final input in form.querySelectorAll('input[name]')) {
+      final name = input.attributes['name'] ?? '';
+      if (name.isEmpty) continue;
+      fields[name] = input.attributes['value'] ?? '';
+    }
+    for (final area in form.querySelectorAll('textarea[name]')) {
+      final name = area.attributes['name'] ?? '';
+      if (name.isEmpty) continue;
+      fields[name] = area.text;
+    }
+    for (final select in form.querySelectorAll('select[name]')) {
+      final name = select.attributes['name'] ?? '';
+      if (name.isEmpty) continue;
+      final selected = select.querySelector('option[selected]');
+      fields[name] = selected?.attributes['value'] ?? '';
+    }
+    return (action: _absolute(form.attributes['action'] ?? 'bbs/book_view_add.aspx'), fields: fields);
+  }
+
+  /// 发帖。返回站点的提示文本。
+  Future<String> publish({
+    required int classId,
+    required String title,
+    required String content,
+    String sendmoney = '',
+  }) async {
+    try {
+      final form = await fetchComposeForm(classId);
+      final fields = Map<String, String>.of(form.fields)
+        ..['book_title'] = title
+        ..['book_content'] = content
+        ..['classid'] = '$classId'
+        ..['g'] = '';
+      if (sendmoney.isNotEmpty) fields['sendmoney'] = sendmoney;
+      final body = await _post(
+        form.action,
+        fields,
+        referer: _absolute('bbs/book_view_add.aspx?classid=$classId'),
+      );
+      if (_looksLoggedOut(body)) return '登录已失效，请重新登录';
+      if (body.contains('成功') || body.contains('发表成功')) return '发布成功';
+      final tip = RegExp(r'温馨提示[^<]*<br[^>]*>([^<]{2,80})').firstMatch(body)?.group(1);
+      if (tip != null && tip.trim().isNotEmpty) return tip.trim();
+      final error = RegExp(r'<div class="error">([^<]+)</div>').firstMatch(body)?.group(1);
+      if (error != null && error.trim().isNotEmpty) return error.trim();
+      return '已提交，发布结果请回列表刷新确认';
+    } catch (e) {
+      return '发布失败：$e';
+    }
+  }
+
+  /// 从站点页面里捞板块（论坛首页/站内导航里的 classid 链接）。
+  Future<List<({int id, String name})>> fetchBoardsFromSite() async {
+    final found = <int, String>{};
+    for (final url in <String>['wapindex.aspx?classid=206', 'wapindex.aspx?siteid=1000']) {
+      try {
+        final html = await _fetch(url);
+        final doc = html_parser.parse(html);
+        for (final anchor in doc.querySelectorAll('a[href]')) {
+          final href = anchor.attributes['href'] ?? '';
+          final match = RegExp(r'classid=(\d+)').firstMatch(href);
+          if (match == null) continue;
+          final id = int.tryParse(match.group(1) ?? '');
+          final name = anchor.text.trim();
+          if (id == null || id <= 0 || name.isEmpty || name.length > 8) continue;
+          found.putIfAbsent(id, () => name);
+        }
+      } catch (_) {
+        // 一个页面拿不到就试下一个。
+      }
+    }
+    final builtin = boards.map((b) => b.id).toSet();
+    return found.entries
+        .where((entry) => !builtin.contains(entry.key) && ![0, 171, 206, 207, 299].contains(entry.key))
+        .map((entry) => (id: entry.key, name: entry.value))
+        .toList()
+      ..sort((a, b) => a.id - b.id);
+  }
+
   Future<YaohuoThread> fetchThread(String url) async {
     final html = await _fetch(url);
     return parseThread(html, url);

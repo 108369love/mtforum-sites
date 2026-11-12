@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../data/yaohuo_repository.dart';
 import '../../navigation/app_routes.dart';
 import '../internal_browser_page.dart';
+import 'yaohuo_compose_page.dart';
 import 'yaohuo_thread_list.dart';
 
 /// 妖火首页：最新 / 精华 两条流。
@@ -23,6 +24,11 @@ class YaohuoHomePage extends StatelessWidget {
             ],
           ),
           actions: [
+            IconButton(
+              tooltip: '发帖',
+              onPressed: () => Navigator.of(context).push(appRoute(builder: (_) => const YaohuoComposePage())),
+              icon: const Icon(Icons.add_rounded),
+            ),
             IconButton(
               tooltip: '用浏览器打开',
               onPressed: () => Navigator.of(context).push(
@@ -80,12 +86,47 @@ class YaohuoBoardPage extends StatelessWidget {
 }
 
 /// 板块列表。
-class YaohuoBoardsPage extends StatelessWidget {
+class YaohuoBoardsPage extends StatefulWidget {
   const YaohuoBoardsPage({super.key});
+
+  @override
+  State<YaohuoBoardsPage> createState() => _YaohuoBoardsPageState();
+}
+
+class _YaohuoBoardsPageState extends State<YaohuoBoardsPage> {
+  final List<({int id, String name})> _extra = <({int id, String name})>[];
+  bool _loadingMore = false;
+
+  Future<void> _loadMore() async {
+    if (_loadingMore) return;
+    setState(() => _loadingMore = true);
+    try {
+      final boards = await YaohuoRepository.instance.fetchBoardsFromSite();
+      if (!mounted) return;
+      setState(() {
+        _extra
+          ..clear()
+          ..addAll(boards);
+        _loadingMore = false;
+      });
+      if (boards.isEmpty) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(const SnackBar(content: Text('站点页面里没解析到更多板块')));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadingMore = false);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text('加载板块失败：$e')));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final all = <({int id, String name})>[...YaohuoRepository.boards, ..._extra];
     return Scaffold(
       appBar: AppBar(title: const Text('版块')),
       body: ListView(
@@ -102,29 +143,31 @@ class YaohuoBoardsPage extends StatelessWidget {
               type: MaterialType.transparency,
               child: Column(
                 children: [
-                  for (var i = 0; i < YaohuoRepository.boards.length; i++) ...[
+                  for (var i = 0; i < all.length; i++) ...[
                     if (i > 0) Divider(height: 1, color: scheme.outlineVariant.withValues(alpha: 0.4)),
                     ListTile(
                       leading: Icon(Icons.forum_outlined, size: 20, color: scheme.primary),
-                      title: Text(
-                        YaohuoRepository.boards[i].name,
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                      ),
-                      subtitle: Text('classid ${YaohuoRepository.boards[i].id}', style: const TextStyle(fontSize: 11)),
+                      title: Text(all[i].name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                      subtitle: Text('classid ${all[i].id}', style: const TextStyle(fontSize: 11)),
                       trailing: Icon(Icons.chevron_right_rounded, size: 20, color: scheme.outline),
                       onTap: () => Navigator.of(context).push(
-                        appRoute(
-                          builder: (_) => YaohuoBoardPage(
-                            classId: YaohuoRepository.boards[i].id,
-                            name: YaohuoRepository.boards[i].name,
-                          ),
-                        ),
+                        appRoute(builder: (_) => YaohuoBoardPage(classId: all[i].id, name: all[i].name)),
                       ),
                     ),
                   ],
                 ],
               ),
             ),
+          ),
+          const SizedBox(height: 12),
+          Center(
+            child: _loadingMore
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : TextButton.icon(
+                    onPressed: _loadMore,
+                    icon: const Icon(Icons.unfold_more_rounded, size: 18),
+                    label: const Text('更多板块'),
+                  ),
           ),
         ],
       ),
