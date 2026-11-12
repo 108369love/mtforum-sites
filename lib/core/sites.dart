@@ -99,8 +99,23 @@ class SiteProfile {
     ],
   );
 
+  static const SiteProfile yaohuo = SiteProfile(
+    id: 'yaohuo',
+    name: '妖火网',
+    base: 'https://yaohuo.me/',
+    mode: SiteMode.web,
+    tagline: '内置浏览器 · yaohuo.me',
+    notes: '妖火论坛（ASP.NET）所有内容都要登录，登录还带 Cloudflare Turnstile 人机验证，'
+        '纯 Dart 登录过不去，所以整站交给内置浏览器：验证码在那个真实浏览器里由站点自己完成。',
+    quickLinks: <SiteQuickLink>[
+      SiteQuickLink('首页', '', Icons.home_outlined),
+      SiteQuickLink('论坛', 'wapindex.aspx?classid=206', Icons.forum_outlined),
+      SiteQuickLink('登录', 'waplogin.aspx', Icons.login_rounded),
+    ],
+  );
+
   /// 内置站点，顺序就是选择列表里的顺序。
-  static const List<SiteProfile> builtin = <SiteProfile>[mtForum, xda];
+  static const List<SiteProfile> builtin = <SiteProfile>[mtForum, xda, yaohuo];
 
   static const String customId = 'custom';
 
