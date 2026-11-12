@@ -41,20 +41,15 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
     super.dispose();
   }
 
-  /// 收藏 / 顶 / 赞：都是 GET 一个带参数的地址。
-  Future<void> _hit(String url, String label) async {
-    if (url.isEmpty) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text('$label入口没找到，可能在浏览器里才能用')));
-      return;
-    }
-    final ok = await YaohuoRepository.instance.hit(url);
+  /// 收藏：站点是 POST 表单（带 __CSRFToken），不是 GET 链接。
+  Future<void> _favorite() async {
+    final thread = _thread;
+    if (thread == null) return;
+    final ok = await YaohuoRepository.instance.favorite(thread, referer: widget.url);
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(ok ? '$label成功' : '$label失败')));
-    if (ok) await _load();
+      ..showSnackBar(SnackBar(content: Text(ok ? '收藏成功' : '收藏失败，可能需要在浏览器里操作')));
   }
 
   Future<void> _sendReply() async {
@@ -153,23 +148,12 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         ),
         actions: [
-          if (thread != null) ...[
+          if (thread != null)
             IconButton(
               tooltip: '收藏',
-              onPressed: () => _hit(thread.favoriteUrl, '收藏'),
+              onPressed: _favorite,
               icon: const Icon(Icons.star_outline_rounded),
             ),
-            IconButton(
-              tooltip: '顶',
-              onPressed: () => _hit(thread.upUrl, '顶'),
-              icon: const Icon(Icons.thumb_up_outlined),
-            ),
-            IconButton(
-              tooltip: '赞',
-              onPressed: () => _hit(thread.likeUrl, '赞'),
-              icon: const Icon(Icons.favorite_outline_rounded),
-            ),
-          ],
           IconButton(tooltip: '刷新', onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
           IconButton(
             tooltip: '用浏览器打开',
