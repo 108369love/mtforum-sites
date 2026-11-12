@@ -57,6 +57,7 @@ class YaohuoThread {
     required this.bodyText,
     required this.images,
     required this.links,
+    required this.media,
     required this.replies,
     required this.moreUrl,
     this.threadId = '',
@@ -75,6 +76,9 @@ class YaohuoThread {
   final String bodyText;
   final List<String> images;
   final List<({String text, String url})> links;
+
+  /// 正文里的视频/音频/内嵌播放器（UBB 媒体），原生放不了，给卡片跳浏览器播。
+  final List<({String url, String kind})> media;
   final List<YaohuoReply> replies;
 
   /// 「更多回帖」的地址，空串表示没有更多。
@@ -526,7 +530,36 @@ class YaohuoRepository {
         .replaceAll('<!--listE-->', '')
         .replaceAll(RegExp(r'<div id="KL_show_next_list">[\s\S]*?</div>'), '');
     final fragment = html_parser.parseFragment(cleaned);
-    final bodyText = _compact(fragment.text ?? '');
+    final media = <({String url, String kind})>[];
+    void addMedia(dom.Element element, String kind) {
+      final src = element.attributes['src'] ?? element.attributes['data-src'] ?? '';
+      if (src.isEmpty) return;
+      if (media.any((item) => item.url == src)) return;
+      media.add((url: _absolute(src), kind: kind));
+    }
+    for (final video in fragment.querySelectorAll('video')) {
+      final src = video.attributes['src'] ?? '';
+      if (src.isNotEmpty) {
+        addMedia(video, '视频');
+      } else {
+        for (final source in video.querySelectorAll('source')) {
+          addMedia(source, '视频');
+        }
+      }
+    }
+    for (final audio in fragment.querySelectorAll('audio')) {
+      addMedia(audio, '音频');
+    }
+    for (final frame in fragment.querySelectorAll('iframe')) {
+      addMedia(frame, '内嵌播放');
+    }
+    for (final embed in fragment.querySelectorAll('embed')) {
+      addMedia(embed, '内嵌播放');
+    }
+    final bodyText = _compact((fragment.text ?? '')
+        .replaceAll(RegExp(r'\{[^{}]{0,30}不支持在线播放[^{}]{0,30}\}'), '')
+        .replaceAll(RegExp(r'\{[^{}]{0,20}请更换浏览器[^{}]{0,20}\}'), '')
+        .replaceAll(RegExp(r'\{media=[^}]*\}'), ''));
     final images = <String>[];
     for (final img in fragment.querySelectorAll('img')) {
       final src = img.attributes['src'] ?? '';
@@ -555,6 +588,7 @@ class YaohuoRepository {
       bodyText: bodyText,
       images: images,
       links: links,
+      media: media,
       replies: _parseReplies(doc),
       moreUrl: _moreRepliesUrl(doc),
       threadId: formField(replyForm, 'id'),

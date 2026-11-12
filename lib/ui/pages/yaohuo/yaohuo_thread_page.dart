@@ -380,6 +380,25 @@ class _YaohuoThreadPageState extends State<YaohuoThreadPage> {
               ),
             ),
         ],
+        if (thread.media.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('正文里的媒体', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: scheme.onSurfaceVariant)),
+          const SizedBox(height: 4),
+          for (final item in thread.media)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              leading: Icon(
+                item.kind == '音频' ? Icons.audiotrack_rounded : Icons.play_circle_outline_rounded,
+                size: 20,
+                color: scheme.primary,
+              ),
+              title: Text(item.kind, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              subtitle: Text(item.url, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)),
+              trailing: Icon(Icons.open_in_new_rounded, size: 16, color: scheme.outline),
+              onTap: () => _openBrowser(item.url, title: item.kind),
+            ),
+        ],
         if (thread.links.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text('正文里的链接', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: scheme.onSurfaceVariant)),

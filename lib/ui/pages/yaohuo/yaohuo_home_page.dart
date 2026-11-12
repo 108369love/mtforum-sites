@@ -53,6 +53,11 @@ class YaohuoHomePage extends StatelessWidget {
                     ),
                   ),
                   IconButton(
+                    tooltip: '我的地盘',
+                    onPressed: () => _openBrowser(context, 'https://yaohuo.me/myfile.aspx', '我的地盘'),
+                    icon: const Icon(Icons.vertical_split_outlined),
+                  ),
+                  IconButton(
                     tooltip: '发帖',
                     onPressed: () => _openBrowser(
                       context,
@@ -75,15 +80,6 @@ class YaohuoHomePage extends StatelessWidget {
             ),
             Row(
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(left: 2, right: 0),
-                  child: IconButton(
-                    tooltip: '我的地盘',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () => _openBrowser(context, 'https://yaohuo.me/myfile.aspx', '我的地盘'),
-                    icon: const Icon(Icons.vertical_split_outlined, size: 20),
-                  ),
-                ),
                 Expanded(
                   child: TabBar(
                     labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),

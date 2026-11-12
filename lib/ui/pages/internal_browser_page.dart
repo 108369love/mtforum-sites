@@ -923,6 +923,8 @@ $dark''';
         unawaited(_hierarchyBack());
       },
       child: Scaffold(
+        // 键盘浮在页面上、不压缩 WebView：否则弹出输入法后页面只剩上半屏。
+        resizeToAvoidBottomInset: false,
         appBar: AppBar(
           automaticallyImplyLeading: false,
           leading: widget.site == null
