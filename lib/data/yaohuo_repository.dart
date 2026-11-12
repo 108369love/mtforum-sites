@@ -120,10 +120,10 @@ class YaohuoRepository {
     (id: 201, name: '资源共享'),
     (id: 197, name: '综合技术'),
     (id: 203, name: '免流讨论'),
-    (id: 204, name: '有奖活动'),
+    (id: 204, name: '活动线报'),
     (id: 177, name: '妖火茶馆'),
     (id: 213, name: '悬赏问答'),
-    (id: 240, name: '贴图晒照'),
+    (id: 240, name: '贴图视频'),
     (id: 199, name: '站务处理'),
     (id: 198, name: '投诉建议'),
   ];
@@ -199,6 +199,16 @@ class YaohuoRepository {
         'classId': '$classId',
     };
     final html = await _fetch('bbs/book_list.aspx', query: query);
+    return parseThreadList(html);
+  }
+
+  /// 全站热门：站点按时间窗（1/3/7/30 天）给出排行榜。
+  Future<List<YaohuoThreadItem>> fetchHotThreads({int days = 1, int page = 1}) async {
+    final html = await _fetch('bbs/book_list_hot.aspx', query: <String, String>{
+      'classid': '0',
+      'days': '$days',
+      'page': '$page',
+    });
     return parseThreadList(html);
   }
 

@@ -8,8 +8,6 @@ import '../about_page.dart';
 import '../internal_browser_page.dart';
 import '../site_picker_page.dart';
 import '../userscripts_page.dart';
-import 'yaohuo_auto_list_page.dart';
-import 'yaohuo_compose_page.dart';
 import 'yaohuo_login_page.dart';
 
 /// 妖火的「我的」：账号状态 + 几个入口。
@@ -180,7 +178,7 @@ class _YaohuoProfilePageState extends State<YaohuoProfilePage> {
               leading: Icon(Icons.star_outline_rounded, size: 21, color: scheme.onSurfaceVariant),
               title: const Text('我的收藏', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               trailing: Icon(Icons.chevron_right_rounded, size: 20, color: scheme.outline),
-              onTap: () => _open(const YaohuoAutoListPage(
+              onTap: () => _open(const InternalBrowserPage(
                 url: 'https://yaohuo.me/bbs/favlist.aspx?siteid=1000&classid=0',
                 title: '我的收藏',
               )),
@@ -189,7 +187,7 @@ class _YaohuoProfilePageState extends State<YaohuoProfilePage> {
               leading: Icon(Icons.people_outline_rounded, size: 21, color: scheme.onSurfaceVariant),
               title: const Text('好友', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               trailing: Icon(Icons.chevron_right_rounded, size: 20, color: scheme.outline),
-              onTap: () => _open(const YaohuoAutoListPage(
+              onTap: () => _open(const InternalBrowserPage(
                 url: 'https://yaohuo.me/bbs/FriendList.aspx?siteid=1000&classid=0&friendtype=0',
                 title: '好友',
               )),
@@ -198,7 +196,10 @@ class _YaohuoProfilePageState extends State<YaohuoProfilePage> {
               leading: Icon(Icons.add_box_outlined, size: 21, color: scheme.onSurfaceVariant),
               title: const Text('发帖', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               trailing: Icon(Icons.chevron_right_rounded, size: 20, color: scheme.outline),
-              onTap: () => _open(const YaohuoComposePage()),
+              onTap: () => _open(const InternalBrowserPage(
+                url: 'https://yaohuo.me/bbs/book_view_add.aspx?classid=177',
+                title: '发帖',
+              )),
             ),
           ]),
           const SizedBox(height: 14),

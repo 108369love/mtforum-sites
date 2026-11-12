@@ -5,7 +5,9 @@ import 'yaohuo_thread_list.dart';
 
 /// 妖火搜索：站内按标题搜。
 class YaohuoSearchPage extends StatefulWidget {
-  const YaohuoSearchPage({super.key});
+  const YaohuoSearchPage({super.key, this.initialQuery = ''});
+
+  final String initialQuery;
 
   @override
   State<YaohuoSearchPage> createState() => _YaohuoSearchPageState();
@@ -15,6 +17,16 @@ class _YaohuoSearchPageState extends State<YaohuoSearchPage> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focus = FocusNode();
   String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    final text = widget.initialQuery.trim();
+    if (text.isNotEmpty) {
+      _controller.text = text;
+      _query = text;
+    }
+  }
 
   @override
   void dispose() {
